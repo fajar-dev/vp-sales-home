@@ -1,0 +1,457 @@
+"use client";
+
+import React, { useMemo, useState, Suspense } from "react";
+import {
+  Container,
+  Paper,
+  Box,
+  Typography,
+  Card,
+  CardContent,
+  Stack,
+  Chip,
+} from "@mui/material";
+import { alpha } from "@mui/material/styles";
+
+import PageHeader from "@/components/page-header";
+import PageFilter from "@/components/page-filter";
+import TrendChart from "@/components/trend-chart";
+import MatrixTable from "@/components/matrix-table";
+import { MOCK_SNAPSHOTS, MOCK_ORGANIZATION_NODES } from "@/services/mock/customers-services";
+import { DetailTableModal } from "@/components/detail-table-modal";
+import {
+  TotalServicePovMode,
+  TotalServiceGranularity,
+} from "@/types/entities";
+import { useDashboardFilters } from "@/hooks/use-dashboard-filters";
+import {
+  formatRupiah,
+  buildTimeBuckets,
+  getMetricValueForBucket,
+  buildRevenueRows,
+  getEnrichedRowsForModal,
+} from "@/services/total-revenue";
+
+// V2 expected/actual revenue aggregation implementation
+function TotalRevenueDashboard() {
+  const {
+    year,
+    compareYear,
+    povMode,
+    granularity,
+    setYear,
+    setCompareYear,
+    setPovMode,
+    setGranularity,
+  } = useDashboardFilters();
+
+  const [detailModal, setDetailModal] = useState<{
+    isOpen: boolean;
+    entityId: string | null;
+    level: string | null;
+    label: string | null;
+    period: string | null;
+  }>({
+    isOpen: false,
+    entityId: null,
+    level: null,
+    label: null,
+    period: null,
+  });
+
+  // 1. Build dynamic periods (months, quarters, semesters, years)
+  const timeBuckets = useMemo(() => {
+    return buildTimeBuckets(granularity, year);
+  }, [granularity, year]);
+
+  // Previous year ending baseline bucket for delta calculations
+  const baselinePeriods = useMemo(() => {
+    return [`${year - 1}-12`];
+  }, [year]);
+
+  // Filter snapshots to those visible to user
+  const scopedSnapshots = useMemo(() => {
+    return MOCK_SNAPSHOTS.filter(s => 
+      s.branchId === "branch-medan" || s.branchId === "branch-pekanbaru"
+    );
+  }, []);
+
+  const metricType = "expected";
+
+  const rows = useMemo(() => {
+    return buildRevenueRows(scopedSnapshots, timeBuckets, baselinePeriods, compareYear, MOCK_ORGANIZATION_NODES, metricType, "branch", null, povMode);
+  }, [scopedSnapshots, timeBuckets, compareYear, povMode]);
+
+  const enrichedRowsForModal = useMemo(() => {
+    return getEnrichedRowsForModal(detailModal, year, timeBuckets, scopedSnapshots, MOCK_ORGANIZATION_NODES);
+  }, [detailModal, year, timeBuckets, scopedSnapshots]);
+
+  // Comparison year time buckets for annual comparison calculations
+  const comparisonYear = compareYear !== null ? compareYear : (year - 1);
+
+  const comparisonYearTimeBuckets = useMemo(() => {
+    return buildTimeBuckets(granularity, comparisonYear);
+  }, [granularity, comparisonYear]);
+
+  // Compute headline totals aggregated across all period buckets
+  const totalExpectedRevenue = useMemo(() => {
+    return timeBuckets.reduce((sum, bucket) => sum + getMetricValueForBucket(scopedSnapshots, bucket.periods, "expected"), 0);
+  }, [scopedSnapshots, timeBuckets]);
+
+  const totalActualRevenue = useMemo(() => {
+    return timeBuckets.reduce((sum, bucket) => sum + getMetricValueForBucket(scopedSnapshots, bucket.periods, "actual"), 0);
+  }, [scopedSnapshots, timeBuckets]);
+
+  const previousExpectedRevenue = useMemo(() => {
+    return comparisonYearTimeBuckets.reduce((sum, bucket) => sum + getMetricValueForBucket(scopedSnapshots, bucket.periods, "expected"), 0);
+  }, [scopedSnapshots, comparisonYearTimeBuckets]);
+
+  const previousActualRevenue = useMemo(() => {
+    return comparisonYearTimeBuckets.reduce((sum, bucket) => sum + getMetricValueForBucket(scopedSnapshots, bucket.periods, "actual"), 0);
+  }, [scopedSnapshots, comparisonYearTimeBuckets]);
+
+  const currentMetricTotal = useMemo(() => {
+    return timeBuckets.reduce((sum, bucket) => sum + getMetricValueForBucket(scopedSnapshots, bucket.periods, metricType), 0);
+  }, [scopedSnapshots, timeBuckets]);
+
+  const previousMetricTotal = useMemo(() => {
+    return comparisonYearTimeBuckets.reduce((sum, bucket) => sum + getMetricValueForBucket(scopedSnapshots, bucket.periods, metricType), 0);
+  }, [scopedSnapshots, comparisonYearTimeBuckets]);
+
+  const deltaMetric = currentMetricTotal - previousMetricTotal;
+  const deltaMetricPercentage = previousMetricTotal === 0 ? 0 : Math.round((deltaMetric / previousMetricTotal) * 100);
+
+  const deltaActualRevenue = totalActualRevenue - previousActualRevenue;
+  const deltaActualPercentage = previousActualRevenue === 0 ? 0 : Math.round((deltaActualRevenue / previousActualRevenue) * 100);
+
+  const deltaExpectedRevenue = totalExpectedRevenue - previousExpectedRevenue;
+  const deltaExpectedPercentage = previousExpectedRevenue === 0 ? 0 : Math.round((deltaExpectedRevenue / previousExpectedRevenue) * 100);
+
+  const revenueGap = totalExpectedRevenue - totalActualRevenue;
+  const previousRevenueGap = previousExpectedRevenue - previousActualRevenue;
+  const deltaRevenueGap = revenueGap - previousRevenueGap;
+
+
+
+  // Trend Chart will handle its own height and max value
+
+  return (
+    <Box
+      sx={{
+        backgroundColor: "background.default",
+        minHeight: "100vh",
+        p: "1.5rem",
+      }}
+    >
+      <Container maxWidth="xl">
+        
+        {/* Decoupled PageHeader and PageFilter Components */}
+        <Box sx={{ mb: 2 }}>
+          <PageHeader
+            title="Total Pendapatan"
+            subtitle="Pantau pendapatan aktual dan proyeksi di seluruh hierarki, bandingkan periode, dan sorot kesenjangan monetisasi."
+          />
+        </Box>
+        <Box sx={{ mb: 4 }}>
+          <PageFilter
+            year={year}
+            compareYear={compareYear}
+            onCompareYearChange={setCompareYear}
+            povMode={povMode}
+            metricMode=""
+            metricOptions={[]}
+            showPov={true}
+            granularity={granularity}
+            onYearChange={setYear}
+            onPovChange={setPovMode}
+            onGranularityChange={setGranularity}
+          />
+        </Box>
+
+        {/* Dynamic Summary Cards Row */}
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: {
+              xs: "1fr",
+              sm: "repeat(2, 1fr)",
+              md: "repeat(5, 1fr)",
+            },
+            gap: 2,
+            mb: 4,
+          }}
+        >
+          {/* Card 1: Total Revenue */}
+          <Card
+            elevation={0}
+            sx={{
+              borderRadius: "16px",
+              border: "1px solid",
+              borderColor: "divider",
+              backgroundColor: "background.paper",
+            }}
+          >
+            <CardContent sx={{ p: 2, "&:last-child": { pb: 2 } }}>
+              <Typography variant="body2" sx={{ fontWeight: 500, color: "text.secondary" }}>
+                Total Pendapatan
+              </Typography>
+              <Typography variant="h4" sx={{ fontWeight: 700, mt: 1, mb: 0.5, color: "text.primary" }}>
+                {formatRupiah(totalActualRevenue)}
+              </Typography>
+              <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
+                Pendapatan terealisasi berdasarkan pembayaran
+              </Typography>
+              <Chip
+                label={`${deltaActualRevenue >= 0 ? "+" : ""}${formatRupiah(deltaActualRevenue)} vs ${comparisonYear}`}
+                size="small"
+                sx={{
+                  mt: 1.5,
+                  fontWeight: 600,
+                  fontSize: "11px",
+                  bgcolor: (theme) => alpha(theme.palette[deltaActualRevenue >= 0 ? "success" : "error"].main, 0.12),
+                  color: (theme) => theme.palette[deltaActualRevenue >= 0 ? "success" : "error"].dark,
+                }}
+              />
+            </CardContent>
+          </Card>
+
+          {/* Card 2: Homepaid Revenue */}
+          <Card
+            elevation={0}
+            sx={{
+              borderRadius: "16px",
+              border: "1px solid",
+              borderColor: "divider",
+              backgroundColor: "background.paper",
+            }}
+          >
+            <CardContent sx={{ p: 2, "&:last-child": { pb: 2 } }}>
+              <Typography variant="body2" sx={{ fontWeight: 500, color: "text.secondary" }}>
+                Homepaid Revenue
+              </Typography>
+              <Typography variant="h4" sx={{ fontWeight: 700, mt: 1, mb: 0.5, color: "text.primary" }}>
+                {formatRupiah(totalActualRevenue)}
+              </Typography>
+              <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
+                Pendapatan aktual dari layanan berbayar
+              </Typography>
+              <Chip
+                label={`${deltaActualPercentage >= 0 ? "+" : ""}${deltaActualPercentage}% vs ${comparisonYear}`}
+                size="small"
+                sx={{
+                  mt: 1.5,
+                  fontWeight: 600,
+                  fontSize: "11px",
+                  bgcolor: (theme) => alpha(theme.palette[deltaActualPercentage >= 0 ? "success" : "error"].main, 0.12),
+                  color: (theme) => theme.palette[deltaActualPercentage >= 0 ? "success" : "error"].dark,
+                }}
+              />
+            </CardContent>
+          </Card>
+
+          {/* Card 3: Expected Growth */}
+          <Card
+            elevation={0}
+            sx={{
+              borderRadius: "16px",
+              border: "1px solid",
+              borderColor: "divider",
+              backgroundColor: "background.paper",
+            }}
+          >
+            <CardContent sx={{ p: 2, "&:last-child": { pb: 2 } }}>
+              <Typography variant="body2" sx={{ fontWeight: 500, color: "text.secondary" }}>
+                Proyeksi Pertumbuhan
+              </Typography>
+              <Typography variant="h4" sx={{ fontWeight: 700, mt: 1, mb: 0.5, color: "text.primary" }}>
+                {`${deltaMetricPercentage >= 0 ? "+" : ""}${deltaMetricPercentage}%`}
+              </Typography>
+              <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
+                Pertumbuhan kontrak vs periode pembanding
+              </Typography>
+              <Chip
+                label={`${deltaMetric >= 0 ? "+" : ""}${formatRupiah(deltaMetric)} vs ${comparisonYear}`}
+                size="small"
+                sx={{
+                  mt: 1.5,
+                  fontWeight: 600,
+                  fontSize: "11px",
+                  bgcolor: (theme) => alpha(theme.palette[deltaMetric >= 0 ? "success" : "error"].main, 0.12),
+                  color: (theme) => theme.palette[deltaMetric >= 0 ? "success" : "error"].dark,
+                }}
+              />
+            </CardContent>
+          </Card>
+
+          {/* Card 4: Revenue Gap */}
+          <Card
+            elevation={0}
+            sx={{
+              borderRadius: "16px",
+              border: "1px solid",
+              borderColor: "divider",
+              backgroundColor: "background.paper",
+            }}
+          >
+            <CardContent sx={{ p: 2, "&:last-child": { pb: 2 } }}>
+              <Typography variant="body2" sx={{ fontWeight: 500, color: "text.secondary" }}>
+                Kesenjangan Pendapatan
+              </Typography>
+              <Typography
+                variant="h4"
+                onClick={() => {
+                  setDetailModal({
+                    isOpen: true,
+                    entityId: "revenue_gap",
+                    level: "revenue_gap",
+                    label: `Kesenjangan Pendapatan (Tidak Dibayar) - Tahun ${year}`,
+                    period: null,
+                  });
+                }}
+                sx={{
+                  fontWeight: 700,
+                  mt: 1,
+                  mb: 0.5,
+                  color: "error.main",
+                  textDecoration: "underline",
+                  cursor: "pointer",
+                  "&:hover": {
+                    color: "error.dark",
+                  }
+                }}
+              >
+                {formatRupiah(revenueGap)}
+              </Typography>
+              <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
+                Proyeksi dikurangi pendapatan aktual
+              </Typography>
+              <Chip
+                label={`${deltaRevenueGap >= 0 ? "+" : ""}${formatRupiah(deltaRevenueGap)} vs ${comparisonYear}`}
+                size="small"
+                sx={{
+                  mt: 1.5,
+                  fontWeight: 600,
+                  fontSize: "11px",
+                  bgcolor: (theme) => alpha(theme.palette[deltaRevenueGap >= 0 ? "error" : "success"].main, 0.12),
+                  color: (theme) => theme.palette[deltaRevenueGap >= 0 ? "error" : "success"].dark,
+                }}
+              />
+            </CardContent>
+          </Card>
+
+          {/* Card 5: Homeconnect Revenue */}
+          <Card
+            elevation={0}
+            sx={{
+              borderRadius: "16px",
+              border: "1px solid",
+              borderColor: "divider",
+              backgroundColor: "background.paper",
+            }}
+          >
+            <CardContent sx={{ p: 2, "&:last-child": { pb: 2 } }}>
+              <Typography variant="body2" sx={{ fontWeight: 500, color: "text.secondary" }}>
+                Homeconnect Revenue
+              </Typography>
+              <Typography variant="h4" sx={{ fontWeight: 700, mt: 1, mb: 0.5, color: "text.primary" }}>
+                {formatRupiah(totalExpectedRevenue)}
+              </Typography>
+              <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
+                Proyeksi pendapatan dari layanan terkoneksi
+              </Typography>
+              <Chip
+                label={`${deltaExpectedPercentage >= 0 ? "+" : ""}${deltaExpectedPercentage}% vs ${comparisonYear}`}
+                size="small"
+                sx={{
+                  mt: 1.5,
+                  fontWeight: 600,
+                  fontSize: "11px",
+                  bgcolor: (theme) => alpha(theme.palette[deltaExpectedPercentage >= 0 ? "success" : "error"].main, 0.12),
+                  color: (theme) => theme.palette[deltaExpectedPercentage >= 0 ? "success" : "error"].dark,
+                }}
+              />
+            </CardContent>
+          </Card>
+        </Box>
+
+        {/* Dynamic Trend Chart Component */}
+        <TrendChart
+          series={timeBuckets.map(bucket => {
+            const value = getMetricValueForBucket(scopedSnapshots, bucket.periods, metricType);
+            let compareValue: number | undefined = undefined;
+            if (compareYear !== null) {
+              const comparisonPeriods = bucket.periods.map(period => {
+                const parts = period.split("-");
+                if (parts.length < 2) return String(compareYear);
+                return `${compareYear}-${parts[1]}`;
+              });
+              compareValue = getMetricValueForBucket(scopedSnapshots, comparisonPeriods, metricType);
+            }
+            return {
+              bucketKey: bucket.key,
+              label: bucket.label,
+              value,
+              compareValue,
+            };
+          })}
+          valueType="currency"
+          year={year}
+          compareYear={compareYear}
+          initialPreviousValue={getMetricValueForBucket(scopedSnapshots, baselinePeriods, metricType)}
+        />
+
+        {/* Matrix Tree Breakdown Section */}
+        <MatrixTable 
+          rows={rows} 
+          buckets={timeBuckets} 
+          valueType="currency" 
+          columnWidth="12rem"
+          onLabelClick={(row) => {
+            setDetailModal({
+              isOpen: true,
+              entityId: (row as any).baseId ?? row.id,
+              level: row.level,
+              label: row.label,
+              period: null,
+            });
+          }}
+          onCellClick={(row, bucketKey) => {
+            setDetailModal({
+              isOpen: true,
+              entityId: (row as any).baseId ?? row.id,
+              level: row.level,
+              label: row.label,
+              period: bucketKey,
+            });
+          }}
+        />
+
+      </Container>
+      
+      <DetailTableModal
+        isOpen={detailModal.isOpen}
+        onClose={() => setDetailModal(prev => ({ ...prev, isOpen: false }))}
+        rows={enrichedRowsForModal}
+        title={detailModal.level === "revenue_gap" ? "Detail Kesenjangan Pendapatan (Tidak Dibayar)" : `Detail Pendapatan ${detailModal.label || ""}`}
+        showRevenue={true}
+        showBandwidth={false}
+        metricMode="revenue_gap"
+      />
+    </Box>
+  );
+}
+
+export default function TotalRevenueDashboardPage() {
+  return (
+    <Suspense fallback={
+      <Box sx={{ p: "1.5rem", backgroundColor: "background.default", minHeight: "100vh" }}>
+        <Container maxWidth="xl">
+          <Typography variant="body1" color="text.secondary">Memuat dashboard...</Typography>
+        </Container>
+      </Box>
+    }>
+      <TotalRevenueDashboard />
+    </Suspense>
+  );
+}
+// Trigger Hot Reload for DetailTableModal column header update to 'Manager'
