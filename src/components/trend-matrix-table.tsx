@@ -20,8 +20,8 @@ import { NewServiceTrendRow, TrendMetricCell } from "@/services/new-service";
 
 export interface TrendMatrixTableProps {
   rows: NewServiceTrendRow[];
-  onLabelClick?: (row: NewServiceTrendRow) => void;
-  onCellClick?: (row: NewServiceTrendRow, metricKey: string) => void;
+  onLabelClick?: (row: NewServiceTrendRow, fullLabel: string) => void;
+  onCellClick?: (row: NewServiceTrendRow, metricKey: string, fullLabel: string) => void;
 }
 
 export default function TrendMatrixTable({
@@ -76,7 +76,7 @@ export default function TrendMatrixTable({
         }}
       >
         <Box
-          onClick={() => onCellClick?.(row, metricKey)}
+          onClick={() => onCellClick?.(row, metricKey, row.id.split("::").join(", "))}
           sx={{
             cursor: onCellClick ? "pointer" : "inherit",
             borderRadius: 1,
@@ -208,7 +208,7 @@ export default function TrendMatrixTable({
                       <Box sx={{ minWidth: 0, flex: 1 }}>
                         <Typography
                           variant="body2"
-                          onClick={() => onLabelClick?.(row)}
+                          onClick={() => onLabelClick?.(row, row.id.split("::").join(", "))}
                           sx={{
                             fontWeight: depth === 0 ? 700 : depth === 1 ? 600 : 500,
                             color: depth === 0 ? "text.primary" : "text.secondary",
@@ -219,7 +219,7 @@ export default function TrendMatrixTable({
                             cursor: onLabelClick ? "pointer" : "inherit",
                             "&:hover": onLabelClick ? { color: "primary.main", textDecoration: "underline" } : {},
                           }}
-                          title={row.label}
+                          title={row.id.split("::").join(", ")}
                         >
                           {row.label}
                         </Typography>

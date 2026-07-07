@@ -25,8 +25,8 @@ export interface MatrixTableProps {
   columnWidth?: string;
   invertColors?: boolean; // If true, positive is bad (red) and negative is good (green)
   entityHeaderLabel?: string; // Custom label for the first column (e.g. "Branch & AM Breakdown", etc.)
-  onLabelClick?: (row: TotalServiceV2MatrixRow) => void;
-  onCellClick?: (row: TotalServiceV2MatrixRow, bucketKey: string) => void;
+  onLabelClick?: (row: TotalServiceV2MatrixRow, fullLabel: string) => void;
+  onCellClick?: (row: TotalServiceV2MatrixRow, bucketKey: string, fullLabel: string) => void;
 }
 
 function formatRupiah(value: number): string {
@@ -172,7 +172,7 @@ export default function MatrixTable({
                       <Box sx={{ minWidth: 0, flex: 1 }}>
                         <Typography
                           variant="body2"
-                          onClick={() => onLabelClick?.(row)}
+                          onClick={() => onLabelClick?.(row, row.id.split("::").join(", "))}
                           sx={{
                             fontWeight: depth === 0 ? 700 : depth === 1 ? 600 : 500,
                             color: depth === 0 ? "text.primary" : "text.secondary",
@@ -183,7 +183,7 @@ export default function MatrixTable({
                             cursor: onLabelClick ? "pointer" : "inherit",
                             "&:hover": onLabelClick ? { color: "primary.main", textDecoration: "underline" } : {},
                           }}
-                          title={row.label}
+                          title={row.id.split("::").join(", ")}
                         >
                           {row.label}
                         </Typography>
@@ -265,7 +265,7 @@ export default function MatrixTable({
                             }}
                           >
                             <Box
-                              onClick={() => onCellClick?.(row, cell.bucketKey)}
+                              onClick={() => onCellClick?.(row, cell.bucketKey, row.id.split("::").join(", "))}
                               sx={{
                                 cursor: onCellClick ? "pointer" : "inherit",
                                 borderRadius: 1,
@@ -350,7 +350,7 @@ export default function MatrixTable({
                           }}
                         >
                           <Box
-                            onClick={() => onCellClick?.(row, cell.bucketKey)}
+                            onClick={() => onCellClick?.(row, cell.bucketKey, row.id.split("::").join(", "))}
                             sx={{
                               cursor: onCellClick ? "pointer" : "inherit",
                               borderRadius: 1,

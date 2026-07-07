@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, Suspense } from "react";
+import React, { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import {
   Container,
   Box,
@@ -8,43 +8,36 @@ import {
   Select,
   MenuItem,
   FormControl,
+  Tooltip,
 } from "@mui/material";
 
 import PageHeader from "@/components/page-header";
 import PageFilter from "@/components/page-filter";
 import TrendChart from "@/components/trend-chart";
-import {
-  buildTotalServiceV2DashboardData,
-  TotalServiceV2MatrixRow,
-  TotalServiceV2MatrixCell,
-} from "@/services/total-service";
 import MatrixTable from "@/components/matrix-table";
 import { DetailTableModal } from "@/components/detail-table-modal";
+import { DashboardLoading, DashboardError } from "@/components/dashboard-states";
 import {
-  getServiceStartPeriods,
-  filterSnapshotsByTenure,
-  processDashboardData,
-  getEnrichedRowsForModal,
-} from "@/services/churn-rate";
-import { MOCK_SNAPSHOTS, MOCK_ORGANIZATION_NODES } from "@/services/mock/customers-services";
-import {
-  TotalServiceDashboardState,
   TotalServicePovMode,
   TotalServiceMetricMode,
   TotalServiceGranularity,
-  UserAccessScope,
 } from "@/types/entities";
 import { useDashboardFilters } from "@/hooks/use-dashboard-filters";
+import {
+  fetchTotalServiceSummary,
+  fetchTotalServiceDetail,
+} from "@/services/api/vp-access-home";
+import {
+  adaptToChartSeries,
+  adaptToMatrixRows,
+  adaptTotalServiceDetailToModalRows,
+  buildTimeBuckets,
+  computeInitialPreviousValue,
+  filterDetailByEntity,
+} from "@/services/api/adapters";
+import type { EnrichedDetailRow } from "@/components/detail-table-modal";
 
-const MOCK_ACCESS: UserAccessScope = {
-  userId: "user-ho-001",
-  fullName: "HO User",
-  role: "head_office",
-  organizationNodeId: "global",
-  visibleNodeIds: ["branch-medan", "branch-pekanbaru"],
-  defaultReportScope: "head_office",
-  isActive: true,
-};
+const DEFAULT_BRANCH_ID = '020';
 
 function ChurnRateDashboard() {
   const {
@@ -64,6 +57,13 @@ function ChurnRateDashboard() {
 
   const metricMode = (metricModeRaw || "churn") as TotalServiceMetricMode;
 
+  // API data states
+  const [apiData, setApiData] = useState<Record<string, unknown>[]>([]);
+  const [compareApiData, setCompareApiData] = useState<Record<string, unknown>[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Detail modal state
   const [detailModal, setDetailModal] = useState<{
     isOpen: boolean;
     entityId: string | null;
@@ -78,62 +78,81 @@ function ChurnRateDashboard() {
     period: null,
   });
 
-  // Mappings of service start dates, with simulated historic start periods
-  const serviceStartPeriods = useMemo(() => {
-    return getServiceStartPeriods(MOCK_SNAPSHOTS);
-  }, []);
+  const [detailRows, setDetailRows] = useState<EnrichedDetailRow[]>([]);
 
-  // Filter snapshots based on tenure filter selection
-  const filteredSnapshotsByTenure = useMemo(() => {
-    return filterSnapshotsByTenure(MOCK_SNAPSHOTS, serviceStartPeriods, tenureFilter);
-  }, [tenureFilter, serviceStartPeriods]);
+  /**
+   * Fetches churn data (total_churn from total-service summary).
+   */
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchTotalServiceSummary(year, DEFAULT_BRANCH_ID, povMode) as unknown as Record<string, unknown>[];
+      setApiData(data);
 
-  const dashboardState = useMemo<TotalServiceDashboardState>(() => {
-    return {
-      year,
-      compareYear,
-      povMode,
-      metricMode,
-      granularity,
-      drilldownPath: [],
-      filters: {
-        branchId: null,
-        leadId: null,
-        amId: null,
-        serviceGroup: null,
-        includePartialData: true,
-      },
-      drawer: {
-        isOpen: false,
-        section: null,
-      },
-    };
-  }, [year, compareYear, povMode, metricMode, granularity]);
+      if (compareYear !== null) {
+        const cmpData = await fetchTotalServiceSummary(compareYear, DEFAULT_BRANCH_ID, povMode) as unknown as Record<string, unknown>[];
+        setCompareApiData(cmpData);
+      } else {
+        setCompareApiData(null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memuat data');
+    } finally {
+      setLoading(false);
+    }
+  }, [year, compareYear, povMode]);
 
-  const rawDashboard = useMemo(() => {
-    return buildTotalServiceV2DashboardData({
-      snapshots: filteredSnapshotsByTenure,
-      nodes: MOCK_ORGANIZATION_NODES,
-      access: MOCK_ACCESS,
-      state: dashboardState,
-    });
-  }, [dashboardState, filteredSnapshotsByTenure]);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
-  // Transform monthly snapshots to churn values matching the monthly layout
-  const dashboard = useMemo(() => {
-    return processDashboardData(rawDashboard);
-  }, [rawDashboard]);
+  // Transform API data using 'total_churn' as the metric
+  const chartSeries = useMemo(() => {
+    if (apiData.length === 0) return [];
+    return adaptToChartSeries(apiData, 'total_churn', year, compareApiData, granularity);
+  }, [apiData, year, compareApiData, granularity]);
 
-  const enrichedRowsForModal = useMemo(() => {
-    return getEnrichedRowsForModal({
-      detailModal,
-      year,
-      buckets: dashboard.buckets,
-      metricMode,
-      snapshots: filteredSnapshotsByTenure,
-      organizationNodes: MOCK_ORGANIZATION_NODES,
-    });
-  }, [detailModal, year, dashboard.buckets, metricMode, filteredSnapshotsByTenure]);
+  const initialPreviousValue = useMemo(() => {
+    return computeInitialPreviousValue(apiData, 'total_churn', year);
+  }, [apiData, year]);
+
+  const rows = useMemo(() => {
+    if (apiData.length === 0) return [];
+    return adaptToMatrixRows(apiData, 'total_churn', povMode, year, compareApiData, granularity);
+  }, [apiData, povMode, year, compareApiData, granularity]);
+
+  const buckets = useMemo(() => buildTimeBuckets(year, granularity), [year, granularity]);
+
+  /**
+   * Fetches detail data when modal opens.
+   */
+  const fetchDetailData = useCallback(async (period: string | null) => {
+    try {
+      let apiPeriod: string | undefined = undefined;
+      if (period) {
+        // Only convert if it looks like YYYY-MM format
+        if (/^\d{4}-\d{2}$/.test(period)) {
+          const parts = period.split('-');
+          apiPeriod = parts[1] + parts[0].slice(2); // "2025-01" -> "0125"
+        }
+        // For Q1, H1, year keys — don't pass period, let backend handle with year
+      }
+      const detail = await fetchTotalServiceDetail(year, DEFAULT_BRANCH_ID, apiPeriod);
+      let adapted = adaptTotalServiceDetailToModalRows(detail);
+      // Filter by entity context
+      adapted = filterDetailByEntity(adapted, detailModal.entityId, povMode);
+      setDetailRows(adapted);
+    } catch {
+      setDetailRows([]);
+    }
+  }, [year, detailModal.entityId, povMode]);
+
+  useEffect(() => {
+    if (detailModal.isOpen) {
+      fetchDetailData(detailModal.period);
+    }
+  }, [detailModal.isOpen, detailModal.period, fetchDetailData]);
 
   const TENURE_OPTIONS = [
     { value: "all",        label: "Semua" },
@@ -144,29 +163,33 @@ function ChurnRateDashboard() {
     { value: "gt_5_year", label: "> 5 tahun" },
   ];
 
+  // Tenure filter is kept for UI consistency but disabled since backend doesn't support it
   const tenureControl = (
-    <FormControl size="small" sx={{ minWidth: 160 }}>
-      <Select
-        value={tenureFilter}
-        displayEmpty
-        onChange={(e) => setTenureFilter(e.target.value)}
-        sx={{
-          height: "36px",
-          borderRadius: "10px",
-          fontWeight: 500,
-          fontSize: "13px",
-          color: "text.primary",
-          backgroundColor: "background.paper",
-          "& .MuiSelect-select": { py: 0.8, px: 1.5 },
-        }}
-      >
-        {TENURE_OPTIONS.map((opt) => (
-          <MenuItem key={opt.value} value={opt.value} sx={{ fontSize: "13px", fontWeight: 500 }}>
-            {opt.label}
-          </MenuItem>
-        ))}
-      </Select>
-    </FormControl>
+    <Tooltip title="Filter tenure belum didukung oleh backend" arrow>
+      <FormControl size="small" sx={{ minWidth: 160 }}>
+        <Select
+          value={"all"}
+          displayEmpty
+          disabled
+          sx={{
+            height: "36px",
+            borderRadius: "10px",
+            fontWeight: 500,
+            fontSize: "13px",
+            color: "text.secondary",
+            backgroundColor: "background.paper",
+            opacity: 0.6,
+            "& .MuiSelect-select": { py: 0.8, px: 1.5 },
+          }}
+        >
+          {TENURE_OPTIONS.map((opt) => (
+            <MenuItem key={opt.value} value={opt.value} sx={{ fontSize: "13px", fontWeight: 500 }}>
+              {opt.label}
+            </MenuItem>
+          ))}
+        </Select>
+      </FormControl>
+    </Tooltip>
   );
 
   return (
@@ -179,7 +202,7 @@ function ChurnRateDashboard() {
     >
       <Container maxWidth="xl">
         
-        {/* Decoupled PageHeader and PageFilter Components */}
+        {/* Page Header */}
         <Box sx={{ mb: 2 }}>
           <PageHeader
             title="Tingkat Churn"
@@ -200,49 +223,67 @@ function ChurnRateDashboard() {
             extraControls={tenureControl}
           />
         </Box>
-        
-        {/* Dynamic Trend Chart Component */}
-        <TrendChart
-          series={dashboard.chartSeries}
-          valueType="number"
-          year={year}
-          compareYear={compareYear}
-          initialPreviousValue={dashboard.initialPreviousValue}
-        />
 
-        {/* Matrix Tree Breakdown Section */}
-        <MatrixTable 
-          rows={dashboard.rows} 
-          buckets={dashboard.buckets} 
-          valueType="number" 
-          invertColors={true}
-          onLabelClick={(row) => {
-            setDetailModal({
-              isOpen: true,
-              entityId: row.id,
-              level: row.level,
-              label: row.label,
-              period: null,
-            });
-          }}
-          onCellClick={(row, bucketKey) => {
-            setDetailModal({
-              isOpen: true,
-              entityId: row.id,
-              level: row.level,
-              label: row.label,
-              period: bucketKey,
-            });
-          }}
-        />
+        {/* Content */}
+        {loading ? (
+          <DashboardLoading />
+        ) : error ? (
+          <DashboardError error={error} onRetry={fetchData} />
+        ) : (
+          <>
+            {/* Dynamic Trend Chart Component */}
+            <TrendChart
+              series={chartSeries}
+              valueType="number"
+              year={year}
+              compareYear={compareYear}
+              initialPreviousValue={initialPreviousValue}
+            />
+
+            {/* Matrix Tree Breakdown Section */}
+            <MatrixTable 
+              rows={rows} 
+              buckets={buckets} 
+              valueType="number" 
+              invertColors={true}
+              onLabelClick={(row, fullLabel) => {
+                setDetailModal({
+                  isOpen: true,
+                  entityId: row.id,
+                  level: row.level,
+                  label: fullLabel,
+                  period: null,
+                });
+              }}
+              onCellClick={(row, bucketKey, fullLabel) => {
+                setDetailModal({
+                  isOpen: true,
+                  entityId: row.id,
+                  level: row.level,
+                  label: fullLabel,
+                  period: bucketKey,
+                });
+              }}
+            />
+          </>
+        )}
 
       </Container>
 
       <DetailTableModal
         isOpen={detailModal.isOpen}
         onClose={() => setDetailModal(prev => ({ ...prev, isOpen: false }))}
-        rows={enrichedRowsForModal}
-        title={`Detail ${detailModal.label || ""}`}
+        rows={detailRows}
+        title={`Detail ${detailModal.label || ""}${detailModal.period ? ` — ${
+          (() => {
+            if (/^\d{4}-\d{2}$/.test(detailModal.period)) {
+              const [y, m] = detailModal.period.split('-');
+              const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+              return `${months[parseInt(m, 10) - 1]} ${y}`;
+            }
+            return detailModal.period;
+          })()
+        }` : ""}`}
         showBandwidth={false}
         showRevenue={false}
         metricMode={metricMode}

@@ -1,45 +1,42 @@
 "use client";
 
-import React, { useMemo, useState, Suspense } from "react";
+import React, { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import {
   Container,
-  Paper,
   Box,
   Typography,
-  Stack,
 } from "@mui/material";
-import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 
 import PageHeader from "@/components/page-header";
 import PageFilter from "@/components/page-filter";
 import TrendChart from "@/components/trend-chart";
-import {
-  buildTotalServiceV2DashboardData,
-  TotalServiceV2MatrixRow,
-  TotalServiceV2MatrixCell,
-  getEnrichedRowsForModal,
-} from "@/services/total-service";
 import MatrixTable from "@/components/matrix-table";
 import { DetailTableModal } from "@/components/detail-table-modal";
-import { MOCK_SNAPSHOTS, MOCK_ORGANIZATION_NODES } from "@/services/mock/customers-services";
+import { DashboardLoading, DashboardError } from "@/components/dashboard-states";
 import {
-  TotalServiceDashboardState,
   TotalServicePovMode,
   TotalServiceMetricMode,
   TotalServiceGranularity,
-  UserAccessScope,
 } from "@/types/entities";
 import { useDashboardFilters } from "@/hooks/use-dashboard-filters";
+import {
+  fetchTotalServiceSummary,
+  fetchTotalServiceDetail,
+  fetchNewGrowthSummary,
+} from "@/services/api/vp-access-home";
+import {
+  adaptToChartSeries,
+  adaptToMatrixRows,
+  adaptTotalServiceDetailToModalRows,
+  buildTimeBuckets,
+  computeInitialPreviousValue,
+  filterDetailByEntity,
+} from "@/services/api/adapters";
+import type { TrendChartPoint } from "@/components/trend-chart";
+import type { TotalServiceV2MatrixRow } from "@/services/total-service";
+import type { EnrichedDetailRow } from "@/components/detail-table-modal";
 
-const MOCK_ACCESS: UserAccessScope = {
-  userId: "user-ho-001",
-  fullName: "HO User",
-  role: "head_office",
-  organizationNodeId: "global",
-  visibleNodeIds: ["branch-medan", "branch-pekanbaru"],
-  defaultReportScope: "head_office",
-  isActive: true,
-};
+const DEFAULT_BRANCH_ID = '020';
 
 function TotalServiceDashboard() {
   const {
@@ -57,6 +54,13 @@ function TotalServiceDashboard() {
 
   const metricMode = (metricModeRaw || "total_service") as TotalServiceMetricMode;
 
+  // API data states
+  const [apiData, setApiData] = useState<Record<string, unknown>[]>([]);
+  const [compareApiData, setCompareApiData] = useState<Record<string, unknown>[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Detail modal state
   const [detailModal, setDetailModal] = useState<{
     isOpen: boolean;
     entityId: string | null;
@@ -71,53 +75,105 @@ function TotalServiceDashboard() {
     period: null,
   });
 
-  // Track open/collapsed row IDs in our tree matrix
+  const [detailRows, setDetailRows] = useState<EnrichedDetailRow[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
 
-  // 2. Build Dashboard State dynamically
-  const dashboardState = useMemo<TotalServiceDashboardState>(() => {
-    return {
-      year,
-      compareYear,
-      povMode,
-      metricMode,
-      granularity,
-      drilldownPath: [],
-      filters: {
-        branchId: null,
-        leadId: null,
-        amId: null,
-        serviceGroup: null,
-        includePartialData: true,
-      },
-      drawer: {
-        isOpen: false,
-        section: null,
-      },
-    };
-  }, [year, compareYear, povMode, metricMode, granularity]);
+  /**
+   * Fetches summary data from the appropriate endpoint based on metricMode.
+   */
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      let data: Record<string, unknown>[];
 
-  // 3. Process Snapshots through the V2 Aggregation Engine
-  const dashboard = useMemo(() => {
-    return buildTotalServiceV2DashboardData({
-      snapshots: MOCK_SNAPSHOTS,
-      nodes: MOCK_ORGANIZATION_NODES,
-      access: MOCK_ACCESS,
-      state: dashboardState,
-    });
-  }, [dashboardState]);
+      if (metricMode === 'new_service') {
+        data = await fetchNewGrowthSummary(year, DEFAULT_BRANCH_ID, povMode) as unknown as Record<string, unknown>[];
+      } else {
+        data = await fetchTotalServiceSummary(year, DEFAULT_BRANCH_ID, povMode) as unknown as Record<string, unknown>[];
+      }
 
-  const enrichedRowsForModal = useMemo(() => {
-    return getEnrichedRowsForModal({
-      detailModal,
-      year,
-      buckets: dashboard.buckets,
-      metricMode,
-      snapshots: MOCK_SNAPSHOTS,
-      organizationNodes: MOCK_ORGANIZATION_NODES,
-    });
-  }, [detailModal, year, dashboard.buckets, metricMode]);
+      setApiData(data);
 
-  // 4. (Removed local flattenedRows logic)
+      if (compareYear !== null) {
+        let cmpData: Record<string, unknown>[];
+        if (metricMode === 'new_service') {
+          cmpData = await fetchNewGrowthSummary(compareYear, DEFAULT_BRANCH_ID, povMode) as unknown as Record<string, unknown>[];
+        } else {
+          cmpData = await fetchTotalServiceSummary(compareYear, DEFAULT_BRANCH_ID, povMode) as unknown as Record<string, unknown>[];
+        }
+        setCompareApiData(cmpData);
+      } else {
+        setCompareApiData(null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memuat data');
+    } finally {
+      setLoading(false);
+    }
+  }, [year, compareYear, povMode, metricMode]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // Determine which metric key to use based on metricMode
+  const metricKey = useMemo(() => {
+    if (metricMode === 'total_service') return 'total_active';
+    if (metricMode === 'churn') return 'total_churn';
+    if (metricMode === 'new_service') return 'total_new';
+    return 'total_active';
+  }, [metricMode]);
+
+  // Transform API data to component-compatible formats
+  const chartSeries = useMemo(() => {
+    if (apiData.length === 0) return [];
+    return adaptToChartSeries(apiData, metricKey, year, compareApiData, granularity);
+  }, [apiData, metricKey, year, compareApiData, granularity]);
+
+  const initialPreviousValue = useMemo(() => {
+    return computeInitialPreviousValue(apiData, metricKey, year);
+  }, [apiData, metricKey, year]);
+
+  const rows = useMemo(() => {
+    if (apiData.length === 0) return [];
+    return adaptToMatrixRows(apiData, metricKey, povMode, year, compareApiData, granularity);
+  }, [apiData, metricKey, povMode, year, compareApiData, granularity]);
+
+  const buckets = useMemo(() => buildTimeBuckets(year, granularity), [year, granularity]);
+
+  /**
+   * Fetches detail data when modal opens.
+   */
+  const fetchDetailData = useCallback(async (period: string | null) => {
+    setDetailLoading(true);
+    try {
+      let apiPeriod: string | undefined = undefined;
+      if (period) {
+        // Only convert if it looks like YYYY-MM format
+        if (/^\d{4}-\d{2}$/.test(period)) {
+          const parts = period.split('-');
+          apiPeriod = parts[1] + parts[0].slice(2); // "2025-01" -> "0125"
+        }
+        // For Q1, H1, year keys — don't pass period, let backend handle with year
+      }
+      const detail = await fetchTotalServiceDetail(year, DEFAULT_BRANCH_ID, apiPeriod);
+      let adapted = adaptTotalServiceDetailToModalRows(detail);
+      // Filter by entity context
+      adapted = filterDetailByEntity(adapted, detailModal.entityId, povMode);
+      setDetailRows(adapted);
+    } catch {
+      setDetailRows([]);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [year, detailModal.entityId, povMode]);
+
+  useEffect(() => {
+    if (detailModal.isOpen) {
+      fetchDetailData(detailModal.period);
+    }
+  }, [detailModal.isOpen, detailModal.period, fetchDetailData]);
 
   return (
     <Box
@@ -129,7 +185,7 @@ function TotalServiceDashboard() {
     >
       <Container maxWidth="xl">
         
-        {/* Decoupled PageHeader and PageFilter Components */}
+        {/* Page Header */}
         <Box sx={{ mb: 2 }}>
           <PageHeader
             title="Layanan Aktif"
@@ -157,89 +213,47 @@ function TotalServiceDashboard() {
           />
         </Box>
 
+        {/* Content */}
+        {loading ? (
+          <DashboardLoading />
+        ) : error ? (
+          <DashboardError error={error} onRetry={fetchData} />
+        ) : (
+          <>
+            {/* Dynamic Trend Chart Component */}
+            <TrendChart
+              series={chartSeries}
+              valueType="number"
+              year={year}
+              compareYear={compareYear}
+              initialPreviousValue={initialPreviousValue}
+            />
 
-
-        {/* Dynamic Trend Chart Component */}
-        <TrendChart
-          series={dashboard.chartSeries}
-          valueType="number"
-          year={year}
-          compareYear={compareYear}
-          initialPreviousValue={dashboard.initialPreviousValue}
-        />
-
-        {/* Matrix Tree Breakdown Section */}
-        <MatrixTable 
-          rows={dashboard.rows} 
-          buckets={dashboard.buckets} 
-          valueType="number" 
-          onLabelClick={(row) => {
-            setDetailModal({
-              isOpen: true,
-              entityId: row.id,
-              level: row.level,
-              label: row.label,
-              period: null,
-            });
-          }}
-          onCellClick={(row, bucketKey) => {
-            setDetailModal({
-              isOpen: true,
-              entityId: row.id,
-              level: row.level,
-              label: row.label,
-              period: bucketKey,
-            });
-          }}
-        />
-
-        {/* Collapsible Integrity Warnings Details panel */}
-        {dashboard.warnings.length > 0 && (
-          <Paper
-            elevation={0}
-            sx={{
-              p: 3,
-              borderRadius: "16px",
-              border: "1px solid",
-              borderColor: "divider",
-              backgroundColor: "background.paper",
-            }}
-          >
-            <Stack
-              direction="row"
-              spacing={1}
-              sx={{ alignItems: "center", mb: 2 }}
-            >
-              <WarningAmberIcon sx={{ color: "error.main" }} />
-              <Typography variant="subtitle1" sx={{ fontWeight: 700, color: "text.primary" }}>
-                Detail Peringatan Integritas Data ({dashboard.warnings.length})
-              </Typography>
-            </Stack>
-            <Stack spacing={1}>
-              {dashboard.warnings.map((warning, idx: number) => (
-                <Box
-                  key={idx}
-                  sx={{
-                    p: 1.5,
-                    borderRadius: "8px",
-                    backgroundColor: warning.severity === "error" ? "#fef2f2" : "#fffbeb",
-                    border: "1px solid",
-                    borderColor: warning.severity === "error" ? "#fecaca" : "#fef3c7",
-                  }}
-                >
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      fontWeight: 600,
-                      color: warning.severity === "error" ? "error.main" : "warning.main",
-                    }}
-                  >
-                    [{warning.code}] {warning.message}
-                  </Typography>
-                </Box>
-              ))}
-            </Stack>
-          </Paper>
+            {/* Matrix Tree Breakdown Section */}
+            <MatrixTable 
+              rows={rows} 
+              buckets={buckets} 
+              valueType="number" 
+              onLabelClick={(row, fullLabel) => {
+                setDetailModal({
+                  isOpen: true,
+                  entityId: row.id,
+                  level: row.level,
+                  label: fullLabel,
+                  period: null,
+                });
+              }}
+              onCellClick={(row, bucketKey, fullLabel) => {
+                setDetailModal({
+                  isOpen: true,
+                  entityId: row.id,
+                  level: row.level,
+                  label: fullLabel,
+                  period: bucketKey,
+                });
+              }}
+            />
+          </>
         )}
 
       </Container>
@@ -247,8 +261,17 @@ function TotalServiceDashboard() {
       <DetailTableModal
         isOpen={detailModal.isOpen}
         onClose={() => setDetailModal(prev => ({ ...prev, isOpen: false }))}
-        rows={enrichedRowsForModal}
-        title={`Detail ${detailModal.label || ""}`}
+        rows={detailRows}
+        title={`Detail ${detailModal.label || ""}${detailModal.period ? ` — ${
+          (() => {
+            if (/^\d{4}-\d{2}$/.test(detailModal.period)) {
+              const [y, m] = detailModal.period.split('-');
+              const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+              return `${months[parseInt(m, 10) - 1]} ${y}`;
+            }
+            return detailModal.period;
+          })()
+        }` : ""}`}
         showBandwidth={false}
         showRevenue={false}
         metricMode={metricMode}
