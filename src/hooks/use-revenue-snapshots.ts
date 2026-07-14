@@ -5,6 +5,7 @@ import type {
   ServiceMonthlySnapshot,
   OrganizationNode,
 } from "@/types/entities";
+import { getApiUrl } from "@/lib/url";
 
 interface RevenueState {
   snapshots: ServiceMonthlySnapshot[];
@@ -26,7 +27,7 @@ export function useRevenueSnapshots(years: number[]): RevenueState {
   useEffect(() => {
     let cancelled = false;
 
-    fetch(`/api/revenue?years=${key}`)
+    fetch(getApiUrl(`/api/revenue?years=${key}`))
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();

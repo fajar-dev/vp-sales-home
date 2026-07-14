@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { EnrichedDetailRow } from "@/components/detail-table-modal";
+import { getApiUrl } from "@/lib/url";
 
 /**
  * Fetches click-scoped detail rows from a detail API endpoint. Pass `null` as
@@ -31,7 +32,7 @@ export function useDetailRows(
     }
     let cancelled = false;
 
-    fetch(cacheKey)
+    fetch(getApiUrl(cacheKey))
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();

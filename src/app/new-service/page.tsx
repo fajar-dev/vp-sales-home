@@ -15,6 +15,7 @@ import PageFilter from "@/components/page-filter";
 import TrendChart from "@/components/trend-chart";
 import MatrixTable from "@/components/matrix-table";
 import TrendMatrixTable from "@/components/trend-matrix-table";
+import LoadingState from "@/components/loading-state";
 import { DetailTableModal } from "@/components/detail-table-modal";
 import {
   buildNewServiceDashboardData,
@@ -260,58 +261,59 @@ function NewServiceDashboard() {
             </Typography>
           </Paper>
         )}
-        {loading && (
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Memuat data dari database...
-          </Typography>
-        )}
 
-        {/* Dynamic Trend Chart Component */}
-        <TrendChart
-          series={dashboard.chartSeries}
-          valueType="number"
-          year={year}
-          compareYear={compareYear}
-          initialPreviousValue={dashboard.initialPreviousValue}
-        />
-
-        {/* Matrix Tree Breakdown Section */}
-        <Box sx={{ mt: 4 }}>
-          {displayMode === "performance" ? (
-            <MatrixTable
-              rows={dashboard.rows}
-              buckets={dashboard.buckets}
+        {loading ? (
+          <LoadingState label="Memuat Data" />
+        ) : (
+          <>
+            {/* Dynamic Trend Chart Component */}
+            <TrendChart
+              series={dashboard.chartSeries}
               valueType="number"
-              entityHeaderLabel={povMode === "sales" ? "Cabang" : "Cabang"}
-              onLabelClick={(row) => {
-                setDetailModal({
-                  isOpen: true,
-                  entityId: row.id,
-                  level: row.level,
-                  label: row.label,
-                  period: null,
-                  subMetricFilter: null,
-                });
-              }}
-              onCellClick={(row, bucketKey) => {
-                setDetailModal({
-                  isOpen: true,
-                  entityId: row.id,
-                  level: row.level,
-                  label: row.label,
-                  period: bucketKey,
-                  subMetricFilter: null,
-                });
-              }}
+              year={year}
+              compareYear={compareYear}
+              initialPreviousValue={dashboard.initialPreviousValue}
             />
-          ) : (
-            <TrendMatrixTable
-              rows={dashboard.trendRows}
-              onLabelClick={handleTrendLabelClick}
-              onCellClick={handleTrendCellClick}
-            />
-          )}
-        </Box>
+
+            {/* Matrix Tree Breakdown Section */}
+            <Box sx={{ mt: 4 }}>
+              {displayMode === "performance" ? (
+                <MatrixTable
+                  rows={dashboard.rows}
+                  buckets={dashboard.buckets}
+                  valueType="number"
+                  entityHeaderLabel={povMode === "sales" ? "Cabang" : "Cabang"}
+                  onLabelClick={(row) => {
+                    setDetailModal({
+                      isOpen: true,
+                      entityId: row.id,
+                      level: row.level,
+                      label: row.label,
+                      period: null,
+                      subMetricFilter: null,
+                    });
+                  }}
+                  onCellClick={(row, bucketKey) => {
+                    setDetailModal({
+                      isOpen: true,
+                      entityId: row.id,
+                      level: row.level,
+                      label: row.label,
+                      period: bucketKey,
+                      subMetricFilter: null,
+                    });
+                  }}
+                />
+              ) : (
+                <TrendMatrixTable
+                  rows={dashboard.trendRows}
+                  onLabelClick={handleTrendLabelClick}
+                  onCellClick={handleTrendCellClick}
+                />
+              )}
+            </Box>
+          </>
+        )}
 
       </Container>
 
@@ -332,7 +334,7 @@ export default function NewServiceDashboardPage() {
     <Suspense fallback={
       <Box sx={{ p: "1.5rem", backgroundColor: "background.default", minHeight: "100vh" }}>
         <Container maxWidth="xl">
-          <Typography variant="body1" color="text.secondary">Memuat dashboard...</Typography>
+          <LoadingState label="Memuat Data" minHeight="30rem" />
         </Container>
       </Box>
     }>

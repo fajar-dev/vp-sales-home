@@ -17,6 +17,7 @@ import {
   buildTotalServiceV2DashboardData,
 } from "@/services/total-service";
 import MatrixTable from "@/components/matrix-table";
+import LoadingState from "@/components/loading-state";
 import { DetailTableModal } from "@/components/detail-table-modal";
 import {
   getServiceStartPeriods,
@@ -224,46 +225,47 @@ function ChurnRateDashboard() {
             </Typography>
           </Box>
         )}
-        {loading && (
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Memuat data dari database...
-          </Typography>
+
+        {loading ? (
+          <LoadingState label="Memuat Data" />
+        ) : (
+          <>
+            {/* Dynamic Trend Chart Component */}
+            <TrendChart
+              series={dashboard.chartSeries}
+              valueType="number"
+              year={year}
+              compareYear={compareYear}
+              initialPreviousValue={dashboard.initialPreviousValue}
+            />
+
+            {/* Matrix Tree Breakdown Section */}
+            <MatrixTable
+              rows={dashboard.rows}
+              buckets={dashboard.buckets}
+              valueType="number"
+              invertColors={true}
+              onLabelClick={(row) => {
+                setDetailModal({
+                  isOpen: true,
+                  entityId: row.id,
+                  level: row.level,
+                  label: row.label,
+                  period: null,
+                });
+              }}
+              onCellClick={(row, bucketKey) => {
+                setDetailModal({
+                  isOpen: true,
+                  entityId: row.id,
+                  level: row.level,
+                  label: row.label,
+                  period: bucketKey,
+                });
+              }}
+            />
+          </>
         )}
-
-        {/* Dynamic Trend Chart Component */}
-        <TrendChart
-          series={dashboard.chartSeries}
-          valueType="number"
-          year={year}
-          compareYear={compareYear}
-          initialPreviousValue={dashboard.initialPreviousValue}
-        />
-
-        {/* Matrix Tree Breakdown Section */}
-        <MatrixTable
-          rows={dashboard.rows}
-          buckets={dashboard.buckets}
-          valueType="number"
-          invertColors={true}
-          onLabelClick={(row) => {
-            setDetailModal({
-              isOpen: true,
-              entityId: row.id,
-              level: row.level,
-              label: row.label,
-              period: null,
-            });
-          }}
-          onCellClick={(row, bucketKey) => {
-            setDetailModal({
-              isOpen: true,
-              entityId: row.id,
-              level: row.level,
-              label: row.label,
-              period: bucketKey,
-            });
-          }}
-        />
 
       </Container>
 
@@ -286,7 +288,7 @@ export default function ChurnRateDashboardPage() {
     <Suspense fallback={
       <Box sx={{ p: "1.5rem", backgroundColor: "background.default", minHeight: "100vh" }}>
         <Container maxWidth="xl">
-          <Typography variant="body1" color="text.secondary">Memuat dashboard...</Typography>
+          <LoadingState label="Memuat Data" minHeight="30rem" />
         </Container>
       </Box>
     }>

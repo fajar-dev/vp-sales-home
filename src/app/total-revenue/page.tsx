@@ -16,6 +16,7 @@ import PageHeader from "@/components/page-header";
 import PageFilter from "@/components/page-filter";
 import TrendChart from "@/components/trend-chart";
 import MatrixTable from "@/components/matrix-table";
+import LoadingState from "@/components/loading-state";
 import { DetailTableModal } from "@/components/detail-table-modal";
 import { useDashboardFilters } from "@/hooks/use-dashboard-filters";
 import { useDetailRows } from "@/hooks/use-detail-rows";
@@ -192,13 +193,12 @@ function TotalRevenueDashboard() {
             </Typography>
           </Paper>
         )}
-        {loading && (
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Memuat data pendapatan dari database...
-          </Typography>
-        )}
 
-        {/* Dynamic Summary Cards Row */}
+        {loading ? (
+          <LoadingState label="Memuat Data" />
+        ) : (
+          <>
+            {/* Dynamic Summary Cards Row */}
         <Box
           sx={{
             display: "grid",
@@ -455,6 +455,8 @@ function TotalRevenueDashboard() {
             });
           }}
         />
+          </>
+        )}
 
       </Container>
       
@@ -477,7 +479,7 @@ export default function TotalRevenueDashboardPage() {
     <Suspense fallback={
       <Box sx={{ p: "1.5rem", backgroundColor: "background.default", minHeight: "100vh" }}>
         <Container maxWidth="xl">
-          <Typography variant="body1" color="text.secondary">Memuat dashboard...</Typography>
+          <LoadingState label="Memuat Data" minHeight="30rem" />
         </Container>
       </Box>
     }>

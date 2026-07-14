@@ -13,6 +13,7 @@ import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import PageHeader from "@/components/page-header";
 import PageFilter from "@/components/page-filter";
 import TrendChart from "@/components/trend-chart";
+import LoadingState from "@/components/loading-state";
 import {
   buildTotalServiceV2DashboardData,
 } from "@/services/total-service";
@@ -185,45 +186,46 @@ function TotalServiceDashboard() {
             </Typography>
           </Paper>
         )}
-        {loading && (
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Memuat data dari database...
-          </Typography>
+
+        {loading ? (
+          <LoadingState label="Memuat Data" />
+        ) : (
+          <>
+            {/* Dynamic Trend Chart Component */}
+            <TrendChart
+              series={dashboard.chartSeries}
+              valueType="number"
+              year={year}
+              compareYear={compareYear}
+              initialPreviousValue={dashboard.initialPreviousValue}
+            />
+
+            {/* Matrix Tree Breakdown Section */}
+            <MatrixTable 
+              rows={dashboard.rows} 
+              buckets={dashboard.buckets} 
+              valueType="number" 
+              onLabelClick={(row) => {
+                setDetailModal({
+                  isOpen: true,
+                  entityId: row.id,
+                  level: row.level,
+                  label: row.label,
+                  period: null,
+                });
+              }}
+              onCellClick={(row, bucketKey) => {
+                setDetailModal({
+                  isOpen: true,
+                  entityId: row.id,
+                  level: row.level,
+                  label: row.label,
+                  period: bucketKey,
+                });
+              }}
+            />
+          </>
         )}
-
-        {/* Dynamic Trend Chart Component */}
-        <TrendChart
-          series={dashboard.chartSeries}
-          valueType="number"
-          year={year}
-          compareYear={compareYear}
-          initialPreviousValue={dashboard.initialPreviousValue}
-        />
-
-        {/* Matrix Tree Breakdown Section */}
-        <MatrixTable 
-          rows={dashboard.rows} 
-          buckets={dashboard.buckets} 
-          valueType="number" 
-          onLabelClick={(row) => {
-            setDetailModal({
-              isOpen: true,
-              entityId: row.id,
-              level: row.level,
-              label: row.label,
-              period: null,
-            });
-          }}
-          onCellClick={(row, bucketKey) => {
-            setDetailModal({
-              isOpen: true,
-              entityId: row.id,
-              level: row.level,
-              label: row.label,
-              period: bucketKey,
-            });
-          }}
-        />
 
         {/* Collapsible Integrity Warnings Details panel */}
         {dashboard.warnings.length > 0 && (
@@ -295,7 +297,7 @@ export default function TotalServiceDashboardPage() {
     <Suspense fallback={
       <Box sx={{ p: "1.5rem", backgroundColor: "background.default", minHeight: "100vh" }}>
         <Container maxWidth="xl">
-          <Typography variant="body1" color="text.secondary">Memuat dashboard...</Typography>
+          <LoadingState label="Memuat Data" minHeight="30rem" />
         </Container>
       </Box>
     }>

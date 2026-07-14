@@ -422,8 +422,8 @@ export function DetailTableModal({
                   <TableCell colSpan={colSpan} align="center" sx={{ py: 8 }}>
                     <Stack spacing={1.5} sx={{ alignItems: "center" }}>
                       <CircularProgress size={28} />
-                      <Typography variant="body2" color="text.secondary">
-                        Memuat data...
+                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                        Memuat Data
                       </Typography>
                     </Stack>
                   </TableCell>
@@ -537,7 +537,7 @@ export function DetailTableModal({
         <Box sx={{ px: 3, py: 2, display: "flex", alignItems: "center", justifyContent: "space-between", borderTop: "1px solid", borderColor: "divider" }}>
           <Typography variant="caption" color="text.secondary">
             {loading
-              ? "Memuat data..."
+              ? "Memuat Data"
               : `${filteredRows.length} total baris · halaman ${page} dari ${totalPages}`}
           </Typography>
           <Stack direction="row" spacing={1}>
