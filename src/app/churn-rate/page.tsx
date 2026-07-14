@@ -15,8 +15,6 @@ import PageFilter from "@/components/page-filter";
 import TrendChart from "@/components/trend-chart";
 import {
   buildTotalServiceV2DashboardData,
-  TotalServiceV2MatrixRow,
-  TotalServiceV2MatrixCell,
 } from "@/services/total-service";
 import MatrixTable from "@/components/matrix-table";
 import { DetailTableModal } from "@/components/detail-table-modal";
@@ -24,24 +22,22 @@ import {
   getServiceStartPeriods,
   filterSnapshotsByTenure,
   processDashboardData,
-  getEnrichedRowsForModal,
 } from "@/services/churn-rate";
-import { MOCK_SNAPSHOTS, MOCK_ORGANIZATION_NODES } from "@/services/mock/customers-services";
 import {
   TotalServiceDashboardState,
-  TotalServicePovMode,
   TotalServiceMetricMode,
-  TotalServiceGranularity,
   UserAccessScope,
 } from "@/types/entities";
 import { useDashboardFilters } from "@/hooks/use-dashboard-filters";
+import { useSnapshots } from "@/hooks/use-snapshots";
+import { useDetailRows } from "@/hooks/use-detail-rows";
 
-const MOCK_ACCESS: UserAccessScope = {
+const HEAD_OFFICE_ACCESS: UserAccessScope = {
   userId: "user-ho-001",
   fullName: "HO User",
   role: "head_office",
   organizationNodeId: "global",
-  visibleNodeIds: ["branch-medan", "branch-pekanbaru"],
+  visibleNodeIds: [],
   defaultReportScope: "head_office",
   isActive: true,
 };
@@ -58,7 +54,6 @@ function ChurnRateDashboard() {
     setCompareYear,
     setPovMode,
     setGranularity,
-    setMetricMode,
     setTenureFilter,
   } = useDashboardFilters();
 
@@ -78,15 +73,24 @@ function ChurnRateDashboard() {
     period: null,
   });
 
-  // Mappings of service start dates, with simulated historic start periods
+  // Fetch snapshots + org hierarchy from the reporting API.
+  const yearsToFetch = useMemo(() => {
+    const set = [year, year - 1];
+    if (compareYear) set.push(compareYear);
+    return set;
+  }, [year, compareYear]);
+
+  const { snapshots, nodes, loading, error } = useSnapshots(yearsToFetch);
+
+  // Service start periods derived from the fetched window (tenure filtering).
   const serviceStartPeriods = useMemo(() => {
-    return getServiceStartPeriods(MOCK_SNAPSHOTS);
-  }, []);
+    return getServiceStartPeriods(snapshots);
+  }, [snapshots]);
 
   // Filter snapshots based on tenure filter selection
   const filteredSnapshotsByTenure = useMemo(() => {
-    return filterSnapshotsByTenure(MOCK_SNAPSHOTS, serviceStartPeriods, tenureFilter);
-  }, [tenureFilter, serviceStartPeriods]);
+    return filterSnapshotsByTenure(snapshots, serviceStartPeriods, tenureFilter);
+  }, [snapshots, serviceStartPeriods, tenureFilter]);
 
   const dashboardState = useMemo<TotalServiceDashboardState>(() => {
     return {
@@ -113,27 +117,38 @@ function ChurnRateDashboard() {
   const rawDashboard = useMemo(() => {
     return buildTotalServiceV2DashboardData({
       snapshots: filteredSnapshotsByTenure,
-      nodes: MOCK_ORGANIZATION_NODES,
-      access: MOCK_ACCESS,
+      nodes,
+      access: HEAD_OFFICE_ACCESS,
       state: dashboardState,
     });
-  }, [dashboardState, filteredSnapshotsByTenure]);
+  }, [dashboardState, filteredSnapshotsByTenure, nodes]);
 
   // Transform monthly snapshots to churn values matching the monthly layout
   const dashboard = useMemo(() => {
     return processDashboardData(rawDashboard);
   }, [rawDashboard]);
 
-  const enrichedRowsForModal = useMemo(() => {
-    return getEnrichedRowsForModal({
-      detailModal,
-      year,
-      buckets: dashboard.buckets,
-      metricMode,
-      snapshots: filteredSnapshotsByTenure,
-      organizationNodes: MOCK_ORGANIZATION_NODES,
-    });
-  }, [detailModal, year, dashboard.buckets, metricMode, filteredSnapshotsByTenure]);
+  // Click-scoped churn detail straight from the API.
+  const detailPeriods = useMemo(() => {
+    if (!detailModal.isOpen) return [];
+    if (detailModal.period) {
+      const bucket = dashboard.buckets.find((b) => b.key === detailModal.period);
+      return bucket ? bucket.periods : [detailModal.period];
+    }
+    return dashboard.buckets.flatMap((b) => b.periods);
+  }, [detailModal, dashboard.buckets]);
+
+  const { rows: enrichedRowsForModal, loading: detailLoading } = useDetailRows(
+    "/api/detail",
+    {
+      type: "service",
+      periods: detailPeriods.join(","),
+      level: detailModal.level,
+      entityId: detailModal.entityId,
+      metric: "churn",
+    },
+    detailModal.isOpen,
+  );
 
   const TENURE_OPTIONS = [
     { value: "all",        label: "Semua" },
@@ -201,6 +216,20 @@ function ChurnRateDashboard() {
           />
         </Box>
         
+        {/* Data state banners */}
+        {error && (
+          <Box sx={{ p: 2, mb: 3, borderRadius: "12px", border: "1px solid #fecaca", backgroundColor: "#fef2f2" }}>
+            <Typography variant="body2" sx={{ color: "error.main", fontWeight: 600 }}>
+              Gagal memuat data dari database. Periksa koneksi/kredensial DB. ({error})
+            </Typography>
+          </Box>
+        )}
+        {loading && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Memuat data dari database...
+          </Typography>
+        )}
+
         {/* Dynamic Trend Chart Component */}
         <TrendChart
           series={dashboard.chartSeries}
@@ -211,10 +240,10 @@ function ChurnRateDashboard() {
         />
 
         {/* Matrix Tree Breakdown Section */}
-        <MatrixTable 
-          rows={dashboard.rows} 
-          buckets={dashboard.buckets} 
-          valueType="number" 
+        <MatrixTable
+          rows={dashboard.rows}
+          buckets={dashboard.buckets}
+          valueType="number"
           invertColors={true}
           onLabelClick={(row) => {
             setDetailModal({
@@ -242,6 +271,7 @@ function ChurnRateDashboard() {
         isOpen={detailModal.isOpen}
         onClose={() => setDetailModal(prev => ({ ...prev, isOpen: false }))}
         rows={enrichedRowsForModal}
+        loading={detailLoading}
         title={`Detail ${detailModal.label || ""}`}
         showBandwidth={false}
         showRevenue={false}

@@ -1,8 +1,5 @@
 import type {
-  HierarchyLevel,
   OrganizationNode,
-  OrganizationNodeType,
-  ReportFilterState,
   ServiceMonthlySnapshot,
   TotalServiceDashboardState,
   TotalServiceDrilldownNode,
@@ -13,18 +10,14 @@ import type {
   UserAccessScope,
 } from "@/types/entities"
 import {
-  roundToTwo,
   calculateDeltaPercentage,
   getChangeDirection,
   normalizeServiceGroup,
   parseMonthlyPeriod,
   buildMonthPeriod,
   getYearFromPeriod,
-  getLatestAvailableMonthInYear,
   buildNodeMap,
-  isDescendantOf,
   isNodeVisibleToUser,
-  isSnapshotVisibleToUser,
   applyRoleScope,
 } from "./shared-utils"
 import type { TotalServiceChangeDirection } from "./shared-utils"
@@ -68,6 +61,8 @@ export interface TotalServiceV2MatrixCell {
   isNegative: boolean
   isMutedZero: boolean
   isInProgress: boolean
+  /** False when the bucket has no snapshot data yet (future/not-run months). */
+  hasData: boolean
 }
 
 export interface TotalServiceV2MatrixRow {
@@ -117,10 +112,6 @@ export interface TotalServiceV2DashboardData {
   isEmpty: boolean
 }
 
-const GLOBAL_LEVEL_ID = "global"
-const GLOBAL_LEVEL_NAME = "Pusat"
-const UNMAPPED_SERVICE_GROUP = "Unmapped"
-
 function getActiveCount(snapshot: ServiceMonthlySnapshot): number {
   if (snapshot.activeServiceCount > 0) return snapshot.activeServiceCount
   return snapshot.isActiveEndOfPeriod ? 1 : 0
@@ -129,15 +120,6 @@ function getActiveCount(snapshot: ServiceMonthlySnapshot): number {
 function getChurnCount(snapshot: ServiceMonthlySnapshot): number {
   if (snapshot.churnServiceCount > 0) return snapshot.churnServiceCount
   return snapshot.isChurnedInPeriod ? 1 : 0
-}
-
-function getBlockCount(snapshot: ServiceMonthlySnapshot): number {
-  if (snapshot.blockServiceCount > 0) return snapshot.blockServiceCount
-  return snapshot.isBlockedInPeriod ? 1 : 0
-}
-
-function sumActive(snapshots: ServiceMonthlySnapshot[]): number {
-  return snapshots.reduce((total, item) => total + getActiveCount(item), 0)
 }
 
 function getLatestGeneratedAt(
@@ -220,129 +202,35 @@ export function collectTotalServiceWarnings(
   return warnings
 }
 
-// ==========================================================
-// [TOTAL-SERVICE-V2:TIME-BUCKETS]
-// ==========================================================
+import {
+  buildTimeBuckets as domainBuildTimeBuckets,
+  getPreviousBucket as domainGetPreviousBucket,
+  diffInMonths,
+} from "@/domain/calculators/time-bucket.calculator"
+
+export { diffInMonths }
 
 export function buildTotalServiceV2TimeBuckets(
   granularity: TotalServiceGranularity,
   year: number,
   snapshots: ServiceMonthlySnapshot[],
 ): TotalServiceV2TimeBucket[] {
-  const latestAvailableMonth = getLatestAvailableMonthInYear(snapshots, year)
-
-  const bucketConfigs: Array<{ key: string; label: string; monthNumbers: number[] }> =
-    granularity === "month"
-      ? Array.from({ length: 12 }, (_, index) => {
-          const month = index + 1
-          return {
-            key: buildMonthPeriod(year, month),
-            label: new Date(year, month - 1, 1).toLocaleDateString("id-ID", {
-              month: "short",
-            }),
-            monthNumbers: [month],
-          }
-        })
-      : granularity === "quarter"
-        ? [
-            { key: `${year}-Q1`, label: "Kuartal 1", monthNumbers: [1, 2, 3] },
-            { key: `${year}-Q2`, label: "Kuartal 2", monthNumbers: [4, 5, 6] },
-            { key: `${year}-Q3`, label: "Kuartal 3", monthNumbers: [7, 8, 9] },
-            { key: `${year}-Q4`, label: "Kuartal 4", monthNumbers: [10, 11, 12] },
-          ]
-      : granularity === "semester"
-        ? [
-            { key: `${year}-S1`, label: "Semester 1", monthNumbers: [1, 2, 3, 4, 5, 6] },
-            { key: `${year}-S2`, label: "Semester 2", monthNumbers: [7, 8, 9, 10, 11, 12] },
-          ]
-          : [
-              {
-                key: String(year),
-                label: String(year),
-                monthNumbers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-              },
-            ]
-
-  return bucketConfigs.map((bucket) => {
-    const periods = bucket.monthNumbers.map((month) => buildMonthPeriod(year, month))
-    const startMonth = bucket.monthNumbers[0]
-    const endMonth = bucket.monthNumbers[bucket.monthNumbers.length - 1]
-
-    const hasData = bucket.monthNumbers.some(
-      (month) => latestAvailableMonth !== null && month <= latestAvailableMonth,
-    )
-
-    const isInProgress =
-      latestAvailableMonth !== null &&
-      latestAvailableMonth >= startMonth &&
-      latestAvailableMonth < endMonth
-
-    return {
-      key: bucket.key,
-      label: bucket.label,
-      startPeriod: buildMonthPeriod(year, startMonth),
-      endPeriod: buildMonthPeriod(year, endMonth),
-      periods,
-      monthNumbers: bucket.monthNumbers,
-      hasData,
-      isInProgress,
-    }
-  })
+  return domainBuildTimeBuckets(granularity, year, snapshots)
 }
 
 export function getPreviousBucket(
   granularity: TotalServiceGranularity,
   year: number,
 ): TotalServiceV2TimeBucket {
-  const prevYear = year - 1
-  let key: string
-  let label: string
-  let monthNumbers: number[]
-
-  switch (granularity) {
-    case "month":
-      key = buildMonthPeriod(prevYear, 12)
-      label = "Des " + prevYear
-      monthNumbers = [12]
-      break
-    case "quarter":
-      key = `${prevYear}-Q4`
-      label = "Kuartal 4 " + prevYear
-      monthNumbers = [10, 11, 12]
-      break
-    case "semester":
-      key = `${prevYear}-S2`
-      label = "Semester 2 " + prevYear
-      monthNumbers = [7, 8, 9, 10, 11, 12]
-      break
-    case "year":
-      key = String(prevYear)
-      label = String(prevYear)
-      monthNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-      break
-  }
-
-  const periods = monthNumbers.map((m) => buildMonthPeriod(prevYear, m))
-
-  return {
-    key,
-    label,
-    startPeriod: periods[0],
-    endPeriod: periods[periods.length - 1],
-    periods,
-    monthNumbers,
-    hasData: true,
-    isInProgress: false,
-  }
+  return domainGetPreviousBucket(granularity, year)
 }
+
 
 // ==========================================================
 // [TOTAL-SERVICE-V2:POV-FILTERS]
 // ==========================================================
 
-export function getTotalServiceV2RootLevel(
-  povMode: TotalServicePovMode,
-): TotalServiceRowLevel {
+export function getTotalServiceV2RootLevel(): TotalServiceRowLevel {
   return "branch"
 }
 
@@ -353,7 +241,7 @@ export function getTotalServiceV2CurrentLevel(
     "branch",
     "service_group",
     "service",
-    "category",
+    "customer",
   ]
 
   const salesLevels: TotalServiceRowLevel[] = [
@@ -375,7 +263,7 @@ export function getNextRowLevel(
     "branch",
     "service_group",
     "service",
-    "category",
+    "customer",
   ]
   const salesFlow: TotalServiceRowLevel[] = ["branch", "lead_am", "am", "service"]
 
@@ -442,7 +330,8 @@ function applyTotalServiceV2DrilldownPath(
       if (node.level === "am") {
         return (snapshot.amId ?? "unassigned-am") === node.id
       }
-      if (node.level === "service") return snapshot.serviceId === node.id
+      if (node.level === "service") return snapshot.productServiceId === node.id
+      if (node.level === "customer") return snapshot.custId === node.id
       return true
     })
   }, snapshots)
@@ -508,6 +397,30 @@ function getNewServiceCount(snapshot: ServiceMonthlySnapshot): number {
   return snapshot.isRegisteredInPeriod ? 1 : 0
 }
 
+/**
+ * `new_service` / `churn` are flow metrics (events per month) → summed across a
+ * bucket's months. `total_service` / `accumulation` are stock metrics (a
+ * point-in-time count of active services) → they must NOT be summed across
+ * months (that would count a service once per month it stayed active). Instead
+ * we take the end-of-period value: the active count at the latest month in the
+ * bucket that has data.
+ */
+function isFlowMetric(metricMode: TotalServiceMetricMode): boolean {
+  return metricMode === "new_service" || metricMode === "churn"
+}
+
+/** Active-service count at the most recent month present in `snapshots`. */
+function getStockValueAtLatestPeriod(snapshots: ServiceMonthlySnapshot[]): number {
+  if (snapshots.length === 0) return 0
+  const latestPeriod = snapshots.reduce(
+    (max, snapshot) => (snapshot.period > max ? snapshot.period : max),
+    snapshots[0].period,
+  )
+  return snapshots
+    .filter((snapshot) => snapshot.period === latestPeriod)
+    .reduce((total, snapshot) => total + getActiveCount(snapshot), 0)
+}
+
 function getMetricValueForBucket(
   snapshots: ServiceMonthlySnapshot[],
   bucket: TotalServiceV2TimeBucket,
@@ -525,7 +438,8 @@ function getMetricValueForBucket(
     return bucketSnapshots.reduce((total, snapshot) => total + getChurnCount(snapshot), 0)
   }
 
-  return bucketSnapshots.reduce((total, snapshot) => total + getActiveCount(snapshot), 0)
+  // Stock metric: end-of-period active count (latest month with data in bucket).
+  return getStockValueAtLatestPeriod(bucketSnapshots)
 }
 
 function buildTotalServiceV2Cells(
@@ -557,6 +471,25 @@ function buildTotalServiceV2Cells(
   let previousValue = getMetricValueForBucket(snapshots, prevBucket, metricMode)
 
   return buckets.map((bucket) => {
+    // Months with no snapshot data yet (future / not-run) must not be reported
+    // as a real 0 — that produces a bogus -100% delta. Emit an empty cell.
+    if (!bucket.hasData) {
+      return {
+        bucketKey: bucket.key,
+        bucketLabel: bucket.label,
+        value: 0,
+        absoluteValue: 0,
+        previousValue: null,
+        deltaValue: null,
+        deltaPercentage: null,
+        trendDirection: getChangeDirection(0),
+        isNegative: false,
+        isMutedZero: true,
+        isInProgress: bucket.isInProgress,
+        hasData: false,
+      } satisfies TotalServiceV2MatrixCell
+    }
+
     const value = getMetricValueForBucket(snapshots, bucket, metricMode)
     const compValue = compareYear !== null ? getComparisonValue(bucket) : previousValue
     const deltaValue = compValue === null ? null : value - compValue
@@ -575,6 +508,7 @@ function buildTotalServiceV2Cells(
       isNegative: value < 0,
       isMutedZero: value === 0,
       isInProgress: bucket.isInProgress,
+      hasData: true,
     }
 
     if (compareYear === null) {
@@ -630,16 +564,16 @@ function getTotalServiceV2RowDescriptor(
 
   if (level === "service") {
     return {
-      id: snapshot.serviceId,
-      label: snapshot.serviceId,
+      id: snapshot.productServiceId,
+      label: snapshot.serviceType,
       parentId: snapshot.amId ?? snapshot.branchId,
     }
   }
 
   return {
-    id: "category",
-    label: "Category",
-    parentId: snapshot.serviceId,
+    id: snapshot.custId,
+    label: snapshot.custId,
+    parentId: snapshot.productServiceId,
   }
 }
 
@@ -683,7 +617,11 @@ function buildTotalServiceV2Rows(
         state.compareYear,
       )
       const latestValue = cells.at(-1)?.value ?? 0
-      const totalAcrossBuckets = cells.reduce((total, cell) => total + cell.value, 0)
+      // Flow metrics sum across buckets; stock metrics report the end-of-period
+      // count (active services at the latest month) instead of a meaningless sum.
+      const totalAcrossBuckets = isFlowMetric(state.metricMode)
+        ? cells.reduce((total, cell) => total + cell.value, 0)
+        : getStockValueAtLatestPeriod(rowSnapshots)
       const rowMeta = meta.get(id)
 
       const children = nextLevel
@@ -763,7 +701,11 @@ function buildTotalServiceV2Summary(
 
   return {
     headlineValue: latestPoint?.value ?? 0,
-    totalAcrossBuckets: chartSeries.reduce((total, point) => total + point.value, 0),
+    // Stock metrics: the "total" is the end-of-period count (latest bucket),
+    // not the sum across buckets. Flow metrics keep the running sum.
+    totalAcrossBuckets: isFlowMetric(metricMode)
+      ? chartSeries.reduce((total, point) => total + point.value, 0)
+      : latestPoint?.value ?? 0,
     latestBucketKey: latestPoint?.bucketKey ?? null,
     latestBucketLabel: latestPoint?.label ?? null,
     deltaFromPreviousBucket:
@@ -963,47 +905,10 @@ export function buildTotalServiceV2ExportFileName(params: {
   ].join("-") + ".csv"
 }
 
-/**
- * Calculates month difference between p1 and p2 (format: YYYY-MM)
- */
-export function diffInMonths(p1: string, p2: string): number {
-  const [y1, m1] = p1.split("-").map(Number)
-  const [y2, m2] = p2.split("-").map(Number)
-  return (y2 - y1) * 12 + (m2 - m1)
-}
+import { getServiceStartPeriods } from "@/domain/calculators/metric-aggregation.calculator"
 
-/**
- * Mappings of service start dates, with simulated historic start periods
- * to populate the tenure categories (e.g. 2-3 years, 4-5 years, etc.) deterministically.
- */
-export function getServiceStartPeriods(snapshots: ServiceMonthlySnapshot[]): Map<string, string> {
-  const map = new Map<string, string>()
-  snapshots.forEach((s) => {
-    const existing = map.get(s.serviceId)
-    if (!existing || s.period < existing) {
-      map.set(s.serviceId, s.period)
-    }
-  })
+export { getServiceStartPeriods }
 
-  const simulatedMap = new Map<string, string>()
-  map.forEach((actualStart, serviceId) => {
-    const num = parseInt(serviceId.replace(/\D/g, "")) || 0
-    let start = actualStart
-    if (num % 7 === 0) {
-      start = "2020-01" // > 5 years tenure
-    } else if (num % 5 === 0) {
-      start = "2021-01" // 4-5 years tenure
-    } else if (num % 3 === 0) {
-      start = "2022-01" // 3-4 years tenure
-    } else if (num % 2 === 0) {
-      start = "2023-01" // 2-3 years tenure
-    } else {
-      start = num % 9 === 0 ? "2025-01" : actualStart
-    }
-    simulatedMap.set(serviceId, start)
-  })
-  return simulatedMap
-}
 
 export interface EnrichedModalRow {
   serviceId: string

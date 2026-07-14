@@ -49,14 +49,6 @@ export default function TrendChart({
   const theme = useTheme();
   const chartHeight = 220;
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
-  
-  // State for entry animation
-  const [isMounted, setIsMounted] = useState(false);
-  React.useEffect(() => {
-    setIsMounted(false);
-    const timer = setTimeout(() => setIsMounted(true), 50);
-    return () => clearTimeout(timer);
-  }, [series]);
 
   const maxChartValue = useMemo(() => {
     if (!series || series.length === 0) return 10;

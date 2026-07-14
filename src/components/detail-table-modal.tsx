@@ -1,9 +1,8 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo } from "react";
 import {
   Dialog,
   DialogTitle,
   DialogContent,
-  DialogActions,
   Button,
   Box,
   Typography,
@@ -17,10 +16,10 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Paper,
   Chip,
   IconButton,
   Stack,
+  CircularProgress,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import SearchIcon from "@mui/icons-material/Search";
@@ -30,6 +29,8 @@ import CloseIcon from "@mui/icons-material/Close";
 
 export interface EnrichedDetailRow {
   serviceId: string;
+  serviceCode: string | null;
+  customerId: string;
   customerName: string;
   serviceName: string;
   branchName: string | null;
@@ -39,8 +40,8 @@ export interface EnrichedDetailRow {
   installationAddress: string;
   generatedAt: string;
   currentStatus: string;
-  currentTotalActive: number;
-  bandwidthMbps: number | null;
+  currentTotalActive?: number;
+  bandwidthMbps?: number | null;
   expectedRevenue?: number | null;
   period?: string;
   activeDate?: string;
@@ -58,10 +59,11 @@ interface DetailTableModalProps {
   subtitle?: string;
   showRevenue?: boolean;
   showBandwidth?: boolean;
+  loading?: boolean;
   metricMode?: "total_service" | "new_service" | "churn" | "accumulation" | "revenue_gap";
 }
 
-type SortField = "customerName" | "serviceName" | "branchName" | "currentStatus" | "currentTotalActive" | "expectedRevenue" | "activeDate" | "churnDate" | "tenureText" | "invoiceNumber" | "receiptNumber" | "period";
+type SortField = "default" | "customerName" | "serviceName" | "branchName" | "currentStatus" | "currentTotalActive" | "expectedRevenue" | "activeDate" | "churnDate" | "tenureText" | "invoiceNumber" | "receiptNumber" | "period";
 type SortOrder = "asc" | "desc";
 
 function formatRupiah(value: number): string {
@@ -103,12 +105,13 @@ export function DetailTableModal({
   subtitle = "Disinkronkan dengan filter aktif, dilengkapi pencarian, pengurutan, dan penomoran halaman.",
   showRevenue = false,
   showBandwidth = true,
+  loading = false,
   metricMode
 }: DetailTableModalProps) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10);
-  const [sortBy, setSortBy] = useState<SortField>("customerName");
+  const [sortBy, setSortBy] = useState<SortField>("default");
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
   const [selectedMonth, setSelectedMonth] = useState<string>("all");
 
@@ -118,11 +121,12 @@ export function DetailTableModal({
     return Array.from(new Set(months)).sort().reverse();
   }, [rows]);
 
-  // Reset page & month filter on rows change
-  useEffect(() => {
+  const handleClose = () => {
     setPage(1);
     setSelectedMonth("all");
-  }, [search, sortBy, sortOrder, rows]);
+    setSearch("");
+    onClose();
+  };
 
   const filteredRows = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -135,8 +139,10 @@ export function DetailTableModal({
     const searched = keyword
       ? result.filter((row) =>
           [
+            row.customerId,
             row.customerName,
             row.serviceName,
+            row.serviceCode ?? "",
             row.branchName,
             row.leadName ?? "",
             row.amName ?? "",
@@ -155,6 +161,11 @@ export function DetailTableModal({
         )
       : result;
 
+    // "default" preserves the server order (service_group → service → customer_id).
+    if (sortBy === "default") {
+      return searched;
+    }
+
     const sorted = [...searched].sort((a, b) => {
       const aValue = a[sortBy];
       const bValue = b[sortBy];
@@ -171,6 +182,15 @@ export function DetailTableModal({
     return sorted;
   }, [rows, search, sortBy, sortOrder, selectedMonth]);
 
+  const hasPeriodColumn = rows.some((r) => r.period);
+  const colSpan =
+    8 +
+    (hasPeriodColumn ? 1 : 0) +
+    (metricMode === "churn" ? 2 : 0) +
+    (metricMode === "revenue_gap" ? 2 : 0) +
+    (showRevenue ? 1 : 0) +
+    (showBandwidth ? 1 : 0);
+
   const totalPages = Math.max(Math.ceil(filteredRows.length / pageSize), 1);
 
   const paginatedRows = useMemo(() => {
@@ -181,7 +201,7 @@ export function DetailTableModal({
   return (
     <Dialog 
       open={isOpen} 
-      onClose={onClose} 
+      onClose={handleClose} 
       maxWidth="lg" 
       fullWidth 
       slotProps={{
@@ -207,7 +227,7 @@ export function DetailTableModal({
         </Box>
         <IconButton
           aria-label="close"
-          onClick={onClose}
+          onClick={handleClose}
           sx={{
             color: (theme) => theme.palette.grey[500],
             mt: -1,
@@ -300,6 +320,7 @@ export function DetailTableModal({
                 }}
                 displayEmpty
               >
+                <MenuItem value="default" sx={{ fontSize: "13px", fontWeight: 500 }}>Urutan default</MenuItem>
                 <MenuItem value="customerName" sx={{ fontSize: "13px", fontWeight: 500 }}>Nama pelanggan</MenuItem>
                 <MenuItem value="serviceName" sx={{ fontSize: "13px", fontWeight: 500 }}>Nama layanan</MenuItem>
                 <MenuItem value="branchName" sx={{ fontSize: "13px", fontWeight: 500 }}>Nama cabang</MenuItem>
@@ -396,9 +417,20 @@ export function DetailTableModal({
               </TableRow>
             </TableHead>
             <TableBody>
-              {paginatedRows.length === 0 ? (
+              {loading ? (
                 <TableRow>
-                  <TableCell colSpan={8 + (rows.some((r) => r.period) ? 1 : 0) + (metricMode === "churn" ? 2 : 0) + (metricMode === "revenue_gap" ? 2 : 0) + (showRevenue ? 1 : 0) + (showBandwidth ? 1 : 0)} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={colSpan} align="center" sx={{ py: 8 }}>
+                    <Stack spacing={1.5} sx={{ alignItems: "center" }}>
+                      <CircularProgress size={28} />
+                      <Typography variant="body2" color="text.secondary">
+                        Memuat data...
+                      </Typography>
+                    </Stack>
+                  </TableCell>
+                </TableRow>
+              ) : paginatedRows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={colSpan} align="center" sx={{ py: 6 }}>
                     <Typography variant="body2" color="text.secondary">
                       Data tidak ditemukan untuk filter yang dipilih.
                     </Typography>
@@ -413,12 +445,12 @@ export function DetailTableModal({
                           {item.serviceName}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          {item.serviceId}
+                          {item.serviceCode || "—"}
                         </Typography>
                       </Box>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2">{item.customerName}</Typography>
+                      <Typography variant="body2" title={item.customerName}>{item.customerId || "—"}</Typography>
                       <Typography variant="caption" color="text.secondary" noWrap sx={{ maxWidth: 150, display: "block" }} title={item.installationAddress}>
                         {item.installationAddress}
                       </Typography>
@@ -504,7 +536,9 @@ export function DetailTableModal({
 
         <Box sx={{ px: 3, py: 2, display: "flex", alignItems: "center", justifyContent: "space-between", borderTop: "1px solid", borderColor: "divider" }}>
           <Typography variant="caption" color="text.secondary">
-            {filteredRows.length} total baris · halaman {page} dari {totalPages}
+            {loading
+              ? "Memuat data..."
+              : `${filteredRows.length} total baris · halaman ${page} dari ${totalPages}`}
           </Typography>
           <Stack direction="row" spacing={1}>
             <Button

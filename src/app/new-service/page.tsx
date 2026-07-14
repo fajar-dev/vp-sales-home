@@ -6,14 +6,9 @@ import {
   Paper,
   Box,
   Typography,
-  Card,
-  CardContent,
-  Stack,
   ToggleButtonGroup,
   ToggleButton,
 } from "@mui/material";
-import TrendingUpIcon from "@mui/icons-material/TrendingUp";
-import TrendingDownIcon from "@mui/icons-material/TrendingDown";
 
 import PageHeader from "@/components/page-header";
 import PageFilter from "@/components/page-filter";
@@ -21,26 +16,24 @@ import TrendChart from "@/components/trend-chart";
 import MatrixTable from "@/components/matrix-table";
 import TrendMatrixTable from "@/components/trend-matrix-table";
 import { DetailTableModal } from "@/components/detail-table-modal";
-import { MOCK_SNAPSHOTS, MOCK_ORGANIZATION_NODES } from "@/services/mock/customers-services";
-import { getEnrichedRowsForModal } from "@/services/total-service";
 import {
   buildNewServiceDashboardData,
   NewServiceDashboardState,
   NewServiceTrendRow,
 } from "@/services/new-service";
 import {
-  TotalServiceGranularity,
-  TotalServicePovMode,
   UserAccessScope,
 } from "@/types/entities";
 import { useDashboardFilters } from "@/hooks/use-dashboard-filters";
+import { useSnapshots } from "@/hooks/use-snapshots";
+import { useDetailRows } from "@/hooks/use-detail-rows";
 
-const MOCK_ACCESS: UserAccessScope = {
+const HEAD_OFFICE_ACCESS: UserAccessScope = {
   userId: "user-ho-001",
   fullName: "HO User",
   role: "head_office",
   organizationNodeId: "global",
-  visibleNodeIds: ["branch-medan", "branch-pekanbaru"],
+  visibleNodeIds: [],
   defaultReportScope: "head_office",
   isActive: true,
 };
@@ -95,26 +88,45 @@ function NewServiceDashboard() {
     };
   }, [year, compareYear, povMode, displayMode, granularity]);
 
+  // Fetch snapshots + org hierarchy from the reporting API.
+  const yearsToFetch = useMemo(() => {
+    const set = [year, year - 1];
+    if (compareYear) set.push(compareYear);
+    return set;
+  }, [year, compareYear]);
+
+  const { snapshots, nodes, loading, error } = useSnapshots(yearsToFetch);
+
   const dashboard = useMemo(() => {
     return buildNewServiceDashboardData({
-      snapshots: MOCK_SNAPSHOTS,
-      nodes: MOCK_ORGANIZATION_NODES,
-      access: MOCK_ACCESS,
+      snapshots,
+      nodes,
+      access: HEAD_OFFICE_ACCESS,
       state: dashboardState,
     });
-  }, [dashboardState]);
+  }, [dashboardState, snapshots, nodes]);
 
-  const enrichedRowsForModal = useMemo(() => {
-    return getEnrichedRowsForModal({
-      detailModal,
-      year,
-      buckets: dashboard.buckets,
-      metricMode: "new_service",
-      snapshots: dashboard.filteredSnapshots,
-      organizationNodes: MOCK_ORGANIZATION_NODES,
-      subMetricFilter: detailModal.subMetricFilter,
-    });
-  }, [detailModal, year, dashboard.buckets, dashboard.filteredSnapshots]);
+  // Click-scoped "new service" detail straight from the API.
+  const detailPeriods = useMemo(() => {
+    if (!detailModal.isOpen) return [];
+    if (detailModal.period) {
+      const bucket = dashboard.buckets.find((b) => b.key === detailModal.period);
+      return bucket ? bucket.periods : [detailModal.period];
+    }
+    return dashboard.buckets.flatMap((b) => b.periods);
+  }, [detailModal, dashboard.buckets]);
+
+  const { rows: enrichedRowsForModal, loading: detailLoading } = useDetailRows(
+    "/api/detail",
+    {
+      type: "new_service",
+      periods: detailPeriods.join(","),
+      level: detailModal.level,
+      entityId: detailModal.entityId,
+      subMetric: detailModal.subMetricFilter,
+    },
+    detailModal.isOpen,
+  );
 
   const handleTrendLabelClick = (row: NewServiceTrendRow) => {
     const parts = row.id.split("::");
@@ -240,6 +252,20 @@ function NewServiceDashboard() {
           />
         </Box>
 
+        {/* Data state banners */}
+        {error && (
+          <Paper elevation={0} sx={{ p: 2, mb: 3, borderRadius: "12px", border: "1px solid", borderColor: "#fecaca", backgroundColor: "#fef2f2" }}>
+            <Typography variant="body2" sx={{ color: "error.main", fontWeight: 600 }}>
+              Gagal memuat data dari database. Periksa koneksi/kredensial DB. ({error})
+            </Typography>
+          </Paper>
+        )}
+        {loading && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Memuat data dari database...
+          </Typography>
+        )}
+
         {/* Dynamic Trend Chart Component */}
         <TrendChart
           series={dashboard.chartSeries}
@@ -293,6 +319,7 @@ function NewServiceDashboard() {
         isOpen={detailModal.isOpen}
         onClose={() => setDetailModal(prev => ({ ...prev, isOpen: false }))}
         rows={enrichedRowsForModal}
+        loading={detailLoading}
         title={`Detail ${detailModal.label || ""}`}
         showBandwidth={false}
       />

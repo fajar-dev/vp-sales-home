@@ -120,6 +120,10 @@ export interface ServiceMonthlySnapshot {
   snapshotId: string
   period: string
   serviceId: string
+  /** Product ServiceId (the plan), used to group the "service" tree level. */
+  productServiceId: string
+  /** Human-readable ServiceType name shown at the "service" tree level. */
+  serviceType: string
   custId: string
   branchId: string
   leadId: string | null
@@ -219,6 +223,7 @@ export type TotalServiceRowLevel =
   | "lead_am"
   | "am"
   | "service"
+  | "customer"
   | "category"
 
 export interface TotalServiceFilterState {
@@ -250,3 +255,43 @@ export interface TotalServiceDashboardState {
   drilldownPath: TotalServiceDrilldownNode[]
   drawer: TotalServiceDrawerState
 }
+
+export interface RevenueMatrixCell {
+  bucketKey: string
+  value: number
+  deltaValue: number
+  deltaPercentage: number
+}
+
+export interface RevenueMatrixRow {
+  id: string
+  baseId: string
+  label: string
+  level: TotalServiceRowLevel
+  parentId: string | null
+  latestValue: number
+  totalAcrossBuckets: number
+  cells: RevenueMatrixCell[]
+  children: RevenueMatrixRow[]
+}
+
+export interface RevenueModalRow {
+  serviceId: string
+  customerName: string
+  serviceName: string
+  branchName: string | null
+  leadName: string | null
+  amName: string | null
+  serviceGroup: string
+  installationAddress: string
+  generatedAt: string
+  currentStatus: "churned" | "active" | "inactive"
+  currentTotalActive: number
+  bandwidthMbps: number
+  expectedRevenue: number
+  period: string
+  invoiceNumber: string
+  receiptNumber: string | null
+  activeDate: string
+}
+

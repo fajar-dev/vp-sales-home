@@ -3,94 +3,32 @@ import type {
   ServiceMonthlySnapshot,
   UserAccessScope,
 } from "@/types/entities";
+import {
+  roundToTwo,
+  calculateDeltaPercentage,
+  getChangeDirection,
+  normalizeServiceGroup,
+  ChangeDirection,
+} from "@/domain/calculators/metric-aggregation.calculator";
+import {
+  parseMonthlyPeriod,
+  buildMonthPeriod,
+  getYearFromPeriod,
+  getLatestAvailableMonthInYear,
+} from "@/domain/calculators/time-bucket.calculator";
 
-export type TotalServiceChangeDirection = "up" | "down" | "flat";
+export type TotalServiceChangeDirection = ChangeDirection;
 
-const UNMAPPED_SERVICE_GROUP = "Unmapped";
-
-/**
- * Rounds a number to two decimal places.
- */
-export function roundToTwo(value: number): number {
-  return Math.round(value * 100) / 100;
-}
-
-/**
- * Calculates percentage delta change between current and previous values.
- */
-export function calculateDeltaPercentage(
-  currentValue: number,
-  previousValue: number
-): number | null {
-  if (previousValue === 0) {
-    return currentValue === 0 ? 0 : null;
-  }
-  return roundToTwo(((currentValue - previousValue) / previousValue) * 100);
-}
-
-/**
- * Translates numeric delta into standard change direction string.
- */
-export function getChangeDirection(delta: number): TotalServiceChangeDirection {
-  if (delta > 0) return "up";
-  if (delta < 0) return "down";
-  return "flat";
-}
-
-/**
- * Standardizes unassigned or empty service groups.
- */
-export function normalizeServiceGroup(value: string | null | undefined): string {
-  const normalized = value?.trim();
-  return normalized ? normalized : UNMAPPED_SERVICE_GROUP;
-}
-
-/**
- * Parses dynamic YYYY-MM period strings.
- */
-export function parseMonthlyPeriod(period: string): { year: number; month: number } | null {
-  const match = /^(\d{4})-(\d{2})$/.exec(period);
-  if (!match) return null;
-  return {
-    year: Number(match[1]),
-    month: Number(match[2]),
-  };
-}
-
-/**
- * Formats YYYY-MM period strings cleanly.
- */
-export function buildMonthPeriod(year: number, month: number): string {
-  return `${year}-${String(month).padStart(2, "0")}`;
-}
-
-/**
- * Extracts numeric year from dynamic period string.
- */
-export function getYearFromPeriod(period: string): number | null {
-  const parsed = parseMonthlyPeriod(period);
-  if (!parsed) return null;
-  return parsed.year;
-}
-
-/**
- * Finds the latest available month with data in snapshots for a specific year.
- */
-export function getLatestAvailableMonthInYear(
-  snapshots: ServiceMonthlySnapshot[],
-  year: number
-): number | null {
-  const months = snapshots
-    .map((snapshot) => {
-      const parsed = parseMonthlyPeriod(snapshot.period);
-      if (!parsed || parsed.year !== year) return null;
-      return parsed.month;
-    })
-    .filter((month): month is number => month !== null);
-
-  if (months.length === 0) return null;
-  return Math.max(...months);
-}
+export {
+  roundToTwo,
+  calculateDeltaPercentage,
+  getChangeDirection,
+  normalizeServiceGroup,
+  parseMonthlyPeriod,
+  buildMonthPeriod,
+  getYearFromPeriod,
+  getLatestAvailableMonthInYear,
+};
 
 /**
  * Indexes organization nodes for O(1) visibility checks.
@@ -159,6 +97,9 @@ export function applyRoleScope(
   access: UserAccessScope,
   nodes: OrganizationNode[]
 ): ServiceMonthlySnapshot[] {
+  // Head office sees everything already scoped at the SQL layer (branch/region).
+  if (access.role === "head_office") return snapshots;
+
   const nodeMap = buildNodeMap(nodes);
   return snapshots.filter((snapshot) =>
     isSnapshotVisibleToUser(snapshot, access, nodeMap)

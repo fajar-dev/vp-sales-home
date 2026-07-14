@@ -8,7 +8,6 @@ import {
   Typography,
   Card,
   CardContent,
-  Stack,
   Chip,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
@@ -17,19 +16,15 @@ import PageHeader from "@/components/page-header";
 import PageFilter from "@/components/page-filter";
 import TrendChart from "@/components/trend-chart";
 import MatrixTable from "@/components/matrix-table";
-import { MOCK_SNAPSHOTS, MOCK_ORGANIZATION_NODES } from "@/services/mock/customers-services";
 import { DetailTableModal } from "@/components/detail-table-modal";
-import {
-  TotalServicePovMode,
-  TotalServiceGranularity,
-} from "@/types/entities";
 import { useDashboardFilters } from "@/hooks/use-dashboard-filters";
+import { useDetailRows } from "@/hooks/use-detail-rows";
+import { useRevenueSnapshots } from "@/hooks/use-revenue-snapshots";
 import {
   formatRupiah,
   buildTimeBuckets,
   getMetricValueForBucket,
   buildRevenueRows,
-  getEnrichedRowsForModal,
 } from "@/services/total-revenue";
 
 // V2 expected/actual revenue aggregation implementation
@@ -69,22 +64,43 @@ function TotalRevenueDashboard() {
     return [`${year - 1}-12`];
   }, [year]);
 
-  // Filter snapshots to those visible to user
-  const scopedSnapshots = useMemo(() => {
-    return MOCK_SNAPSHOTS.filter(s => 
-      s.branchId === "branch-medan" || s.branchId === "branch-pekanbaru"
-    );
-  }, []);
+  // Fetch revenue-grain snapshots (expected/actual) from the API.
+  const yearsToFetch = useMemo(() => {
+    const set = [year, year - 1];
+    if (compareYear) set.push(compareYear);
+    return set;
+  }, [year, compareYear]);
+
+  const { snapshots: scopedSnapshots, nodes, loading, error } =
+    useRevenueSnapshots(yearsToFetch);
 
   const metricType = "expected";
 
   const rows = useMemo(() => {
-    return buildRevenueRows(scopedSnapshots, timeBuckets, baselinePeriods, compareYear, MOCK_ORGANIZATION_NODES, metricType, "branch", null, povMode);
-  }, [scopedSnapshots, timeBuckets, compareYear, povMode]);
+    return buildRevenueRows(scopedSnapshots, timeBuckets, baselinePeriods, compareYear, nodes, metricType, "branch", null, povMode);
+  }, [scopedSnapshots, timeBuckets, baselinePeriods, compareYear, nodes, povMode]);
 
-  const enrichedRowsForModal = useMemo(() => {
-    return getEnrichedRowsForModal(detailModal, year, timeBuckets, scopedSnapshots, MOCK_ORGANIZATION_NODES);
-  }, [detailModal, year, timeBuckets, scopedSnapshots]);
+  // Click-scoped revenue detail straight from the API.
+  const detailPeriods = useMemo(() => {
+    if (!detailModal.isOpen) return [];
+    if (detailModal.period) {
+      const bucket = timeBuckets.find((b) => b.key === detailModal.period);
+      return bucket ? bucket.periods : [detailModal.period];
+    }
+    return timeBuckets.flatMap((b) => b.periods);
+  }, [detailModal, timeBuckets]);
+
+  const { rows: enrichedRowsForModal, loading: detailLoading } = useDetailRows(
+    "/api/detail",
+    {
+      type: "revenue",
+      years: yearsToFetch.join(","),
+      periods: detailModal.level === "revenue_gap" ? "" : detailPeriods.join(","),
+      level: detailModal.level,
+      entityId: detailModal.entityId,
+    },
+    detailModal.isOpen,
+  );
 
   // Comparison year time buckets for annual comparison calculations
   const comparisonYear = compareYear !== null ? compareYear : (year - 1);
@@ -167,6 +183,20 @@ function TotalRevenueDashboard() {
             onGranularityChange={setGranularity}
           />
         </Box>
+
+        {/* Data state banners */}
+        {error && (
+          <Paper elevation={0} sx={{ p: 2, mb: 3, borderRadius: "12px", border: "1px solid", borderColor: "#fecaca", backgroundColor: "#fef2f2" }}>
+            <Typography variant="body2" sx={{ color: "error.main", fontWeight: 600 }}>
+              Gagal memuat data pendapatan dari database. Periksa koneksi/kredensial DB. ({error})
+            </Typography>
+          </Paper>
+        )}
+        {loading && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Memuat data pendapatan dari database...
+          </Typography>
+        )}
 
         {/* Dynamic Summary Cards Row */}
         <Box
@@ -409,7 +439,7 @@ function TotalRevenueDashboard() {
           onLabelClick={(row) => {
             setDetailModal({
               isOpen: true,
-              entityId: (row as any).baseId ?? row.id,
+              entityId: ("baseId" in row ? row.baseId : row.id),
               level: row.level,
               label: row.label,
               period: null,
@@ -418,7 +448,7 @@ function TotalRevenueDashboard() {
           onCellClick={(row, bucketKey) => {
             setDetailModal({
               isOpen: true,
-              entityId: (row as any).baseId ?? row.id,
+              entityId: ("baseId" in row ? row.baseId : row.id),
               level: row.level,
               label: row.label,
               period: bucketKey,
@@ -432,6 +462,7 @@ function TotalRevenueDashboard() {
         isOpen={detailModal.isOpen}
         onClose={() => setDetailModal(prev => ({ ...prev, isOpen: false }))}
         rows={enrichedRowsForModal}
+        loading={detailLoading}
         title={detailModal.level === "revenue_gap" ? "Detail Kesenjangan Pendapatan (Tidak Dibayar)" : `Detail Pendapatan ${detailModal.label || ""}`}
         showRevenue={true}
         showBandwidth={false}

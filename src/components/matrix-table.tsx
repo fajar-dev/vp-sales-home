@@ -16,31 +16,20 @@ import {
 } from "@mui/material";
 import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
-import { TotalServiceV2MatrixRow, TotalServiceV2MatrixCell } from "@/services/total-service";
+import { TotalServiceV2MatrixRow } from "@/services/total-service";
+import { RevenueMatrixRow } from "@/types/entities";
+
+export type MatrixRowItem = TotalServiceV2MatrixRow | RevenueMatrixRow;
 
 export interface MatrixTableProps {
-  rows: TotalServiceV2MatrixRow[];
+  rows: MatrixRowItem[];
   buckets: { key: string; label: string }[];
   valueType?: "number" | "currency";
   columnWidth?: string;
   invertColors?: boolean; // If true, positive is bad (red) and negative is good (green)
   entityHeaderLabel?: string; // Custom label for the first column (e.g. "Branch & AM Breakdown", etc.)
-  onLabelClick?: (row: TotalServiceV2MatrixRow) => void;
-  onCellClick?: (row: TotalServiceV2MatrixRow, bucketKey: string) => void;
-}
-
-function formatRupiah(value: number): string {
-  if (value === 0) return "Rp 0";
-  const absValue = Math.abs(value);
-  let formatted = "";
-  if (absValue >= 1000000000) {
-    formatted = `Rp ${(absValue / 1000000000).toFixed(1)}B`;
-  } else if (absValue >= 1000000) {
-    formatted = `Rp ${(absValue / 1000000).toFixed(1)}M`;
-  } else {
-    formatted = `Rp ${absValue.toLocaleString("id-ID")}`;
-  }
-  return value < 0 ? `-${formatted}` : formatted;
+  onLabelClick?: (row: MatrixRowItem) => void;
+  onCellClick?: (row: MatrixRowItem, bucketKey: string) => void;
 }
 
 export default function MatrixTable({
@@ -63,12 +52,12 @@ export default function MatrixTable({
   };
 
   const flattenedRows = useMemo(() => {
-    const list: Array<{ row: TotalServiceV2MatrixRow; depth: number }> = [];
-    function recurse(rowsList: TotalServiceV2MatrixRow[], depth: number) {
+    const list: Array<{ row: MatrixRowItem; depth: number }> = [];
+    function recurse(rowsList: MatrixRowItem[], depth: number) {
       rowsList.forEach((row) => {
         list.push({ row, depth });
         if (expandedRows[row.id] && row.children) {
-          recurse(row.children, depth + 1);
+          recurse(row.children as MatrixRowItem[], depth + 1);
         }
       });
     }
@@ -89,14 +78,14 @@ export default function MatrixTable({
   }, [rows, buckets]);
 
   const parentMap = useMemo(() => {
-    const map = new Map<string, TotalServiceV2MatrixRow>();
-    function recurse(list: TotalServiceV2MatrixRow[], parent: TotalServiceV2MatrixRow | null) {
+    const map = new Map<string, MatrixRowItem>();
+    function recurse(list: MatrixRowItem[], parent: MatrixRowItem | null) {
       list.forEach((r) => {
         if (parent) {
           map.set(r.id, parent);
         }
         if (r.children) {
-          recurse(r.children, r);
+          recurse(r.children as MatrixRowItem[], r);
         }
       });
     }
@@ -198,14 +187,14 @@ export default function MatrixTable({
                             textOverflow: "ellipsis",
                           }}
                         >
-                          {row.level === "lead_am" ? "manajer" : row.level === "am" ? "am" : row.level === "branch" ? "cabang" : row.level === "service_group" ? "grup layanan" : row.level === "service" ? "layanan" : "kategori"}
+                          {row.level === "lead_am" ? "manajer" : row.level === "am" ? "am" : row.level === "branch" ? "cabang" : row.level === "service_group" ? "grup layanan" : row.level === "service" ? "layanan" : row.level === "customer" ? "pelanggan" : "kategori"}
                         </Typography>
                       </Box>
                     </Stack>
                   </TableCell>
 
                   {/* Dynamic Cells */}
-                  {row.cells.map((cell: TotalServiceV2MatrixCell) => {
+                  {row.cells.map((cell: { bucketKey: string; value: number; deltaValue: number | null; deltaPercentage: number | null; hasData?: boolean }) => {
                     const isPositive = cell.deltaValue !== null && cell.deltaValue > 0;
                     const isNegative = cell.deltaValue !== null && cell.deltaValue < 0;
 
@@ -216,7 +205,7 @@ export default function MatrixTable({
                         if (!parentRow) {
                           total = columnTotals[cell.bucketKey] ?? 0;
                         } else {
-                          const parentCell = parentRow.cells.find((c) => c.bucketKey === cell.bucketKey);
+                          const parentCell = parentRow.cells.find((c: { bucketKey: string; value: number }) => c.bucketKey === cell.bucketKey);
                           total = parentCell?.value ?? 0;
                         }
 
@@ -331,10 +320,13 @@ export default function MatrixTable({
                         );
                       }
 
-                      // Otherwise fallback to standard number/percentage formatting
-                      const displayValue = cell.value;
+                      // Otherwise fallback to standard number/percentage formatting.
+                      // Buckets with no data yet (future/not-run months) render
+                      // blank instead of a misleading 0 / -100%.
+                      const isNoData = cell.hasData === false;
+                      const displayValue = isNoData ? "–" : cell.value;
                       let displayDelta = "";
-                      if (cell.deltaValue !== null && cell.deltaValue !== 0) {
+                      if (!isNoData && cell.deltaValue !== null && cell.deltaValue !== 0) {
                         displayDelta = `${isPositive ? "+" : ""}${cell.deltaValue}`;
                       }
 

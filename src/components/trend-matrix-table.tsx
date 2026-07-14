@@ -235,7 +235,7 @@ export default function TrendMatrixTable({
                               textOverflow: "ellipsis",
                             }}
                           >
-                            {row.level === "lead_am" ? "manajer" : row.level === "am" ? "am" : row.level === "branch" ? "cabang" : row.level === "service_group" ? "grup layanan" : row.level === "service" ? "layanan" : "kategori"}
+                            {row.level === "lead_am" ? "manajer" : row.level === "am" ? "am" : row.level === "branch" ? "cabang" : row.level === "service_group" ? "grup layanan" : row.level === "service" ? "layanan" : row.level === "customer" ? "pelanggan" : "kategori"}
                           </Typography>
                         )}
                       </Box>

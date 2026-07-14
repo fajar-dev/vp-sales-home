@@ -1,9 +1,5 @@
 import type {
-  DataCompletenessStatus,
-  HierarchyLevel,
   OrganizationNode,
-  OrganizationNodeType,
-  ReportFilterState,
   ServiceMonthlySnapshot,
   TotalServiceDrilldownNode,
   TotalServiceGranularity,
@@ -19,11 +15,7 @@ import {
   parseMonthlyPeriod,
   buildMonthPeriod,
   getYearFromPeriod,
-  getLatestAvailableMonthInYear,
   buildNodeMap,
-  isDescendantOf,
-  isNodeVisibleToUser,
-  isSnapshotVisibleToUser,
   applyRoleScope,
 } from "./shared-utils";
 import type { TotalServiceChangeDirection } from "./shared-utils";
@@ -89,6 +81,8 @@ export interface TotalServiceV2MatrixCell {
   isNegative: boolean;
   isMutedZero: boolean;
   isInProgress: boolean;
+  /** False when the bucket has no snapshot data yet (future/not-run months). */
+  hasData: boolean;
 }
 
 export interface TotalServiceV2MatrixRow {
@@ -139,7 +133,7 @@ export interface NewServiceDashboardData {
   filteredSnapshots: ServiceMonthlySnapshot[];
 }
 
-const UNMAPPED_SERVICE_GROUP = "Unmapped";
+
 
 function getNewServiceCount(snapshot: ServiceMonthlySnapshot): number {
   if (snapshot.newServiceCount > 0) return snapshot.newServiceCount;
@@ -160,117 +154,26 @@ function getBlockCount(snapshot: ServiceMonthlySnapshot): number {
   return snapshot.isRegisteredInPeriod && snapshot.isBlockedInPeriod ? 1 : 0;
 }
 
+import {
+  buildTimeBuckets as domainBuildTimeBuckets,
+  getPreviousBucket as domainGetPreviousBucket,
+} from "@/domain/calculators/time-bucket.calculator";
+
 export function buildNewServiceTimeBuckets(
   granularity: TotalServiceGranularity,
   year: number,
   snapshots: ServiceMonthlySnapshot[]
 ): TotalServiceV2TimeBucket[] {
-  const latestAvailableMonth = getLatestAvailableMonthInYear(snapshots, year);
-
-  const bucketConfigs: Array<{ key: string; label: string; monthNumbers: number[] }> =
-    granularity === "month"
-      ? Array.from({ length: 12 }, (_, index) => {
-          const month = index + 1;
-          return {
-            key: buildMonthPeriod(year, month),
-            label: new Date(year, month - 1, 1).toLocaleDateString("id-ID", {
-              month: "short",
-            }),
-            monthNumbers: [month],
-          };
-        })
-      : granularity === "quarter"
-        ? [
-            { key: `${year}-Q1`, label: "Kuartal 1", monthNumbers: [1, 2, 3] },
-            { key: `${year}-Q2`, label: "Kuartal 2", monthNumbers: [4, 5, 6] },
-            { key: `${year}-Q3`, label: "Kuartal 3", monthNumbers: [7, 8, 9] },
-            { key: `${year}-Q4`, label: "Kuartal 4", monthNumbers: [10, 11, 12] },
-          ]
-      : granularity === "semester"
-        ? [
-            { key: `${year}-S1`, label: "Semester 1", monthNumbers: [1, 2, 3, 4, 5, 6] },
-            { key: `${year}-S2`, label: "Semester 2", monthNumbers: [7, 8, 9, 10, 11, 12] },
-          ]
-          : [
-              {
-                key: String(year),
-                label: String(year),
-                monthNumbers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-              },
-            ];
-
-  return bucketConfigs.map((bucket) => {
-    const periods = bucket.monthNumbers.map((month) => buildMonthPeriod(year, month));
-    const startMonth = bucket.monthNumbers[0];
-    const endMonth = bucket.monthNumbers[bucket.monthNumbers.length - 1];
-
-    const hasData = bucket.monthNumbers.some(
-      (month) => latestAvailableMonth !== null && month <= latestAvailableMonth
-    );
-
-    const isInProgress =
-      latestAvailableMonth !== null &&
-      latestAvailableMonth >= startMonth &&
-      latestAvailableMonth < endMonth;
-
-    return {
-      key: bucket.key,
-      label: bucket.label,
-      startPeriod: buildMonthPeriod(year, startMonth),
-      endPeriod: buildMonthPeriod(year, endMonth),
-      periods,
-      monthNumbers: bucket.monthNumbers,
-      hasData,
-      isInProgress,
-    };
-  });
+  return domainBuildTimeBuckets(granularity, year, snapshots);
 }
 
 export function getPreviousBucket(
   granularity: TotalServiceGranularity,
   year: number
 ): TotalServiceV2TimeBucket {
-  const prevYear = year - 1;
-  let key: string;
-  let label: string;
-  let monthNumbers: number[];
-
-  switch (granularity) {
-    case "month":
-      key = buildMonthPeriod(prevYear, 12);
-      label = "Des " + prevYear;
-      monthNumbers = [12];
-      break;
-    case "quarter":
-      key = `${prevYear}-Q4`;
-      label = "Kuartal 4 " + prevYear;
-      monthNumbers = [10, 11, 12];
-      break;
-    case "semester":
-      key = `${prevYear}-S2`;
-      label = "Semester 2 " + prevYear;
-      monthNumbers = [7, 8, 9, 10, 11, 12];
-      break;
-    case "year":
-      key = String(prevYear);
-      label = String(prevYear);
-      monthNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-      break;
-  }
-
-  const periods = monthNumbers.map((m) => buildMonthPeriod(prevYear, m));
-
-  return {
-    key,
-    label,
-    startPeriod: periods[0],
-    endPeriod: periods[periods.length - 1],
-    periods,
-    monthNumbers,
-    hasData: true,
-    isInProgress: false,
-  };
+  return domainGetPreviousBucket(granularity, year);
 }
+
 
 export function getNewServiceCurrentLevel(
   state: NewServiceDashboardState
@@ -279,6 +182,7 @@ export function getNewServiceCurrentLevel(
     "branch",
     "service_group",
     "service",
+    "customer",
   ];
   const salesLevels: TotalServiceRowLevel[] = [
     "branch",
@@ -298,6 +202,7 @@ export function getNextRowLevel(
     "branch",
     "service_group",
     "service",
+    "customer",
   ];
   const salesFlow: TotalServiceRowLevel[] = ["branch", "lead_am", "am", "service"];
   const flow = povMode === "operational" ? operationalFlow : salesFlow;
@@ -362,7 +267,8 @@ function applyNewServiceDrilldownPath(
       if (node.level === "am") {
         return (snapshot.amId ?? "unassigned-am") === node.id;
       }
-      if (node.level === "service") return snapshot.serviceId === node.id;
+      if (node.level === "service") return snapshot.productServiceId === node.id;
+      if (node.level === "customer") return snapshot.custId === node.id;
       return true;
     });
   }, snapshots);
@@ -405,6 +311,24 @@ function buildNewServiceCells(
   let previousValue = getMetricValueForBucket(snapshots, prevBucket);
 
   return buckets.map((bucket) => {
+    // No snapshot data yet (future / not-run months) → empty cell, no -100%.
+    if (!bucket.hasData) {
+      return {
+        bucketKey: bucket.key,
+        bucketLabel: bucket.label,
+        value: 0,
+        absoluteValue: 0,
+        previousValue: null,
+        deltaValue: null,
+        deltaPercentage: null,
+        trendDirection: getChangeDirection(0),
+        isNegative: false,
+        isMutedZero: true,
+        isInProgress: bucket.isInProgress,
+        hasData: false,
+      } satisfies TotalServiceV2MatrixCell;
+    }
+
     const value = getMetricValueForBucket(snapshots, bucket);
     const compValue = compareYear !== null ? getComparisonValue(bucket) : previousValue;
     const deltaValue = compValue === null ? null : value - compValue;
@@ -423,6 +347,7 @@ function buildNewServiceCells(
       isNegative: value < 0,
       isMutedZero: value === 0,
       isInProgress: bucket.isInProgress,
+      hasData: true,
     };
 
     if (compareYear === null) {
@@ -478,16 +403,16 @@ function getNewServiceRowDescriptor(
 
   if (level === "service") {
     return {
-      id: snapshot.serviceId,
-      label: snapshot.serviceId,
+      id: snapshot.productServiceId,
+      label: snapshot.serviceType,
       parentId: snapshot.amId ?? snapshot.branchId,
     };
   }
 
   return {
-    id: "category",
-    label: "Category",
-    parentId: snapshot.serviceId,
+    id: snapshot.custId,
+    label: snapshot.custId,
+    parentId: snapshot.productServiceId,
   };
 }
 
@@ -655,8 +580,6 @@ function buildNewServiceTrendRows(
   state: NewServiceDashboardState,
   nodes: OrganizationNode[]
 ): NewServiceTrendRow[] {
-  const allPrevBucketsSnapshots = new Map<string, ServiceMonthlySnapshot[]>();
-  
   // Group snapshots by period to speed up lookups
   const periodSnapshotsMap = new Map<string, ServiceMonthlySnapshot[]>();
   for (const snapshot of snapshots) {

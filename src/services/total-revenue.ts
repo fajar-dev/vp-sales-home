@@ -3,6 +3,8 @@ import {
   OrganizationNode,
   TotalServiceGranularity,
   TotalServiceRowLevel,
+  RevenueMatrixRow,
+  RevenueModalRow,
 } from "@/types/entities";
 
 // Financial multipliers
@@ -115,17 +117,17 @@ function getRevenueRowDescriptor(
 
   if (level === "service") {
     return {
-      id: snapshot.serviceId,
-      label: snapshot.serviceId,
+      id: snapshot.productServiceId,
+      label: snapshot.serviceType,
       parentId: snapshot.amId ?? snapshot.branchId,
     };
   }
 
-  // category
+  // customer
   return {
-    id: "category",
-    label: "Category",
-    parentId: snapshot.serviceId,
+    id: snapshot.custId,
+    label: snapshot.custId,
+    parentId: snapshot.productServiceId,
   };
 }
 
@@ -140,7 +142,7 @@ export function buildRevenueRows(
   parentId: string | null = null,
   povMode: "sales" | "operational" = "sales",
   parentPathId: string = ""
-): any[] {
+): RevenueMatrixRow[] {
   const nodeMap = new Map(mockOrganizationNodes.map((n) => [n.id, n]));
 
   // Group snaps by descriptor ID for the current level
@@ -161,7 +163,7 @@ export function buildRevenueRows(
     }
   }
 
-  const operationalFlow: TotalServiceRowLevel[] = ["branch", "service_group", "service", "category"];
+  const operationalFlow: TotalServiceRowLevel[] = ["branch", "service_group", "service", "customer"];
   const salesFlow: TotalServiceRowLevel[] = ["branch", "lead_am", "am", "service"];
   const flow = povMode === "operational" ? operationalFlow : salesFlow;
   const index = flow.indexOf(level);
@@ -221,18 +223,22 @@ export function buildRevenueRows(
           )
         : [];
 
+      const totalAcrossBuckets = cells.reduce((sum, c) => sum + c.value, 0);
+
       return {
         id: uniqueId,
         baseId: id,
         label: rowMeta?.label ?? id,
         level,
+        parentId: rowMeta?.parentId ?? parentId,
         latestValue,
+        totalAcrossBuckets,
         cells,
         children,
       };
     })
     .filter((r) => r.cells.some((c) => c.value > 0))
-    .sort((a, b) => a.label.localeCompare(b.label))
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
 
 /**
@@ -244,7 +250,7 @@ export function getEnrichedRowsForModal(
   timeBuckets: Array<{ key: string; label: string; periods: string[] }>,
   scopedSnapshots: ServiceMonthlySnapshot[],
   mockOrganizationNodes: OrganizationNode[]
-): any[] {
+): RevenueModalRow[] {
   if (!detailModal.isOpen || !detailModal.entityId || !detailModal.level) return [];
 
   let targetPeriods: string[] = [];
