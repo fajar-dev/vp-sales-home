@@ -274,7 +274,7 @@ export class DetailRepository implements IDetailRepository {
         c.manager_sales_name                               AS manager_sales_name,
         cs.SalesId                                         AS sales_id,
         c.sales_name                                       AS sales_name,
-        cs.Status                                          AS status,
+        cs.CustStatus                                      AS status,
         act.activated_at                                   AS activated_at
       FROM CustomerServices cs
       JOIN (
