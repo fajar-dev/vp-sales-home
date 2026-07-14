@@ -7,6 +7,7 @@ import type {
   OrganizationNode,
 } from "@/types/entities";
 import { UNMAPPED_LABEL } from "@/domain/constants";
+import { RedisManager } from "../cache/RedisManager";
 import { ISnapshotRepository, SnapshotsPayload } from "./ISnapshotRepository";
 
 interface SnapshotRow extends RowDataPacket {
@@ -203,6 +204,12 @@ export class SnapshotRepository implements ISnapshotRepository {
       return { snapshots: [], nodes: [] };
     }
 
+    const cacheKey = `vpsales:snapshots:${cleanYears.sort().join(",")}`;
+    const cached = await RedisManager.get<SnapshotsPayload>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const rows = await DatabaseConnection.query<SnapshotRow>(
       this.buildSnapshotSql(cleanYears),
       {
@@ -211,9 +218,12 @@ export class SnapshotRepository implements ISnapshotRepository {
       },
     );
 
-    return {
+    const payload: SnapshotsPayload = {
       snapshots: rows.map((r) => this.mapRowToSnapshot(r)),
       nodes: this.deriveOrganizationNodes(rows),
     };
+
+    await RedisManager.set(cacheKey, payload);
+    return payload;
   }
 }

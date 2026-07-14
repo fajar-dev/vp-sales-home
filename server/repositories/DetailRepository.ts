@@ -4,6 +4,7 @@ import { DatabaseConfig } from "../config/DatabaseConfig";
 import { billingPeriodToIso } from "@/domain/calculators/time-bucket.calculator";
 import type { EnrichedDetailRow } from "@/components/detail-table-modal";
 import { UNMAPPED_LABEL } from "@/domain/constants";
+import { RedisManager } from "../cache/RedisManager";
 import {
   IDetailRepository,
   ServiceDetailParams,
@@ -175,6 +176,12 @@ export class DetailRepository implements IDetailRepository {
   }
 
   public async findServiceDetails(params: ServiceDetailParams): Promise<EnrichedDetailRow[]> {
+    const cacheKey = `vpsales:service_detail:${JSON.stringify(params)}`;
+    const cached = await RedisManager.get<EnrichedDetailRow[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const { sql, queryParams } = this.buildServiceDetailSql(params);
     const rows = await DatabaseConnection.query<DetailRowRaw>(sql, queryParams);
 
@@ -189,7 +196,7 @@ export class DetailRepository implements IDetailRepository {
       return (a.cust_id ?? "").localeCompare(b.cust_id ?? "");
     });
 
-    return filtered.map<EnrichedDetailRow>((r) => {
+    const result = filtered.map<EnrichedDetailRow>((r) => {
       const isoPeriod = billingPeriodToIso(r.period);
       const activeDate = r.activated_at ? r.activated_at.slice(0, 10) : undefined;
       const churnDate = r.churned_at ? r.churned_at.slice(0, 10) : undefined;
@@ -214,11 +221,20 @@ export class DetailRepository implements IDetailRepository {
         tenureText,
       };
     });
+
+    await RedisManager.set(cacheKey, result);
+    return result;
   }
 
   public async findNewServiceDetails(params: NewServiceDetailParams): Promise<EnrichedDetailRow[]> {
     const periods = params.periods.filter((p) => /^\d{4}-\d{2}$/.test(p));
     if (periods.length === 0) return [];
+
+    const cacheKey = `vpsales:new_service_detail:${JSON.stringify(params)}`;
+    const cached = await RedisManager.get<EnrichedDetailRow[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
 
     const minPeriod = periods.reduce((a, b) => (a < b ? a : b));
     const maxPeriod = periods.reduce((a, b) => (a > b ? a : b));
@@ -321,7 +337,7 @@ export class DetailRepository implements IDetailRepository {
       return (a.cust_id ?? "").localeCompare(b.cust_id ?? "");
     });
 
-    return filtered.map<EnrichedDetailRow>((r) => {
+    const result = filtered.map<EnrichedDetailRow>((r) => {
       const activeDate = r.activated_at ? r.activated_at.slice(0, 10) : undefined;
       return {
         serviceId: this.toId(r.cust_serv_id) ?? "—",
@@ -340,5 +356,8 @@ export class DetailRepository implements IDetailRepository {
         activeDate,
       };
     });
+
+    await RedisManager.set(cacheKey, result);
+    return result;
   }
 }

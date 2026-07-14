@@ -7,6 +7,7 @@ import type {
 } from "@/types/entities";
 import type { EnrichedDetailRow } from "@/components/detail-table-modal";
 import { UNMAPPED_LABEL } from "@/domain/constants";
+import { RedisManager } from "../cache/RedisManager";
 import {
   IRevenueRepository,
   RevenueDetailLevel,
@@ -174,6 +175,13 @@ export class RevenueRepository implements IRevenueRepository {
   }
 
   public async findRevenueSnapshotsByYears(years: number[]): Promise<RevenuePayload> {
+    const cleanYears = this.sanitizeYears(years);
+    const cacheKey = `vpsales:revenue:${cleanYears.sort().join(",")}`;
+    const cached = await RedisManager.get<RevenuePayload>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const rows = await this.fetchRevenueLines(years);
 
     const snapshots = rows.map<ServiceMonthlySnapshot>((row, idx) => {
@@ -207,13 +215,22 @@ export class RevenueRepository implements IRevenueRepository {
       };
     });
 
-    return { snapshots, nodes: this.deriveNodes(rows) };
+    const payload: RevenuePayload = { snapshots, nodes: this.deriveNodes(rows) };
+    await RedisManager.set(cacheKey, payload);
+    return payload;
   }
 
   public async findRevenueDetails(
     params: RevenueDetailParams,
     years: number[],
   ): Promise<EnrichedDetailRow[]> {
+    const cleanYears = this.sanitizeYears(years);
+    const cacheKey = `vpsales:revenue_detail:${JSON.stringify(params)}:${cleanYears.sort().join(",")}`;
+    const cached = await RedisManager.get<EnrichedDetailRow[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const rows = await this.fetchRevenueLines(years);
     const isoPeriods = new Set(params.periods.filter((p) => /^\d{4}-\d{2}$/.test(p)));
     const level = params.level ?? null;
@@ -235,7 +252,7 @@ export class RevenueRepository implements IRevenueRepository {
       return (a.customer_id ?? "").localeCompare(b.customer_id ?? "");
     });
 
-    return filtered.map<EnrichedDetailRow>((row, idx) => {
+    const result = filtered.map<EnrichedDetailRow>((row, idx) => {
       const total = Number(row.total ?? 0);
       const paid = !!row.receipt_id;
       return {
@@ -258,5 +275,8 @@ export class RevenueRepository implements IRevenueRepository {
         receiptNumber: row.receipt_id ?? null,
       };
     });
+
+    await RedisManager.set(cacheKey, result);
+    return result;
   }
 }

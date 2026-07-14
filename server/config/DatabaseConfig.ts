@@ -45,4 +45,29 @@ export class DatabaseConfig {
   public static get serviceCategory(): string {
     return this.readEnv("REPORT_SERVICE_CATEGORY", "access_home");
   }
+
+  // ── Redis Cache Configuration ──────────────────────────────────
+  public static get cacheEnabled(): boolean {
+    return this.readEnv("CACHE_ENABLED", "false").toLowerCase() === "true";
+  }
+
+  public static get redisHost(): string {
+    return this.readEnv("REDIS_HOST", "127.0.0.1");
+  }
+
+  public static get redisPort(): number {
+    return Number(this.readEnv("REDIS_PORT", "6379"));
+  }
+
+  public static get redisPassword(): string {
+    return this.readEnv("REDIS_PASSWORD", "");
+  }
+
+  public static get redisDb(): number {
+    return Number(this.readEnv("REDIS_DB", "0"));
+  }
+
+  public static get redisCacheTtl(): number {
+    return Number(this.readEnv("REDIS_CACHE_TTL", "86400")); // Default 24 hours (86400 seconds)
+  }
 }
