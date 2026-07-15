@@ -23,7 +23,7 @@ export function useDetailRows(
 
   const cacheKey = enabled ? `${endpoint}?${queryString}` : "";
   const [rows, setRows] = useState<EnrichedDetailRow[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [fetchedKey, setFetchedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -40,13 +40,14 @@ export function useDetailRows(
       .then((data) => {
         if (cancelled) return;
         setRows(data.rows ?? []);
-        setLoading(false);
+        setFetchedKey(cacheKey);
+        setError(null);
       })
       .catch((err) => {
         if (cancelled) return;
         setError(String(err));
         setRows([]);
-        setLoading(false);
+        setFetchedKey(cacheKey);
       });
 
     return () => {
@@ -54,5 +55,11 @@ export function useDetailRows(
     };
   }, [cacheKey]);
 
-  return { rows: enabled ? rows : [], loading: enabled && loading, error: enabled ? error : null };
+  const isLoading = Boolean(enabled && cacheKey && fetchedKey !== cacheKey && !error);
+
+  return {
+    rows: enabled ? rows : [],
+    loading: isLoading,
+    error: enabled ? error : null,
+  };
 }
