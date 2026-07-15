@@ -40,8 +40,8 @@ const DETAIL_ENTITY_WHERE: Record<
   service_group: (p) => `AND sg.Description = :${p}`,
   lead_am: (p) => `AND c.ManagerSalesId = :${p}`,
   am: (p) => `AND c.SalesId = :${p}`,
-  service: (p) => `AND cse.ServiceId = :${p}`,
-  customer: (p) => `AND cse.CustId = :${p}`,
+  service: (p) => `AND s.ServiceId = :${p}`,
+  customer: (p) => `AND cust.CustId = :${p}`,
 };
 
 export class DetailRepository implements IDetailRepository {
