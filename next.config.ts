@@ -7,6 +7,7 @@ const basePath =
 
 const nextConfig: NextConfig = {
   basePath: basePath,
+  assetPrefix: basePath ? `${basePath}/` : undefined,
   skipTrailingSlashRedirect: true,
 };
 
