@@ -23,6 +23,7 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import SearchIcon from "@mui/icons-material/Search";
+import LoadingState from "@/components/loading-state";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CloseIcon from "@mui/icons-material/Close";
@@ -238,8 +239,14 @@ export function DetailTableModal({
         </IconButton>
       </DialogTitle>
       
-      <DialogContent dividers sx={{ p: 0, display: "flex", flexDirection: "column" }}>
-        <Box sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", backgroundColor: "#f8fafc" }}>
+      <DialogContent dividers sx={{ p: 0, display: "flex", flexDirection: "column", minHeight: "26rem" }}>
+        {loading ? (
+          <Box sx={{ p: 3, flexGrow: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <LoadingState label="Memuat Data" minHeight="22rem" />
+          </Box>
+        ) : (
+          <>
+            <Box sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", backgroundColor: "#f8fafc" }}>
           <Stack 
             direction={{ xs: "column", md: "row" }} 
             spacing={2} 
@@ -561,7 +568,9 @@ export function DetailTableModal({
             </Button>
           </Stack>
         </Box>
-      </DialogContent>
+      </>
+    )}
+  </DialogContent>
     </Dialog>
   );
 }
