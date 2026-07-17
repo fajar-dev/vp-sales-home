@@ -8,6 +8,7 @@ export class SnapshotController {
     try {
       const { searchParams } = new URL(req.url);
       const yearsRaw = searchParams.get("years");
+      const tenure = searchParams.get("tenure");
 
       let years: number[];
       if (yearsRaw) {
@@ -20,12 +21,12 @@ export class SnapshotController {
         years = [currentYear - 1, currentYear];
       }
 
-      const data = await this.snapshotService.getSnapshots(years);
+      const data = await this.snapshotService.getSnapshots(years, tenure);
       return NextResponse.json(data);
     } catch (err) {
       console.error("[SnapshotController] Error fetching snapshots:", err);
       return NextResponse.json(
-        { error: "Internal server error", message: String(err) },
+        { error: "Gagal memuat data snapshot layanan." },
         { status: 500 },
       );
     }

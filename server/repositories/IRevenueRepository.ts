@@ -19,12 +19,15 @@ export type RevenueDetailLevel =
   | "revenue_gap";
 
 export interface RevenueDetailParams {
+  /** ISO `YYYY-MM` months to include. */
   periods: string[];
   level?: RevenueDetailLevel | null;
   entityId?: string | null;
+  /** When true only unpaid journal lines are returned (revenue gap). */
+  unpaidOnly?: boolean;
 }
 
 export interface IRevenueRepository {
   findRevenueSnapshotsByYears(years: number[]): Promise<RevenuePayload>;
-  findRevenueDetails(params: RevenueDetailParams, years: number[]): Promise<EnrichedDetailRow[]>;
+  findRevenueDetails(params: RevenueDetailParams): Promise<EnrichedDetailRow[]>;
 }

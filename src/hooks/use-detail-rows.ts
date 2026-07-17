@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { EnrichedDetailRow } from "@/components/detail-table-modal";
 import { getApiUrl } from "@/lib/url";
+import { showApiError } from "@/components/toast-host";
 
 /**
  * Fetches click-scoped detail rows from a detail API endpoint. Pass `null` as
@@ -34,7 +35,10 @@ export function useDetailRows(
 
     fetch(getApiUrl(cacheKey))
       .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error || `HTTP ${res.status}`);
+        }
         return res.json();
       })
       .then((data) => {
@@ -45,7 +49,9 @@ export function useDetailRows(
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(String(err));
+        const message = err instanceof Error ? err.message : String(err);
+        showApiError(`Gagal memuat detail: ${message}`);
+        setError(message);
         setRows([]);
         setFetchedKey(cacheKey);
       });

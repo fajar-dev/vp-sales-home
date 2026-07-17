@@ -140,18 +140,19 @@ function getNewServiceCount(snapshot: ServiceMonthlySnapshot): number {
   return snapshot.isRegisteredInPeriod ? 1 : 0;
 }
 
+// Funnel counts are pre-computed server-side from real billing data:
+// homeconnect = new services that already have an invoice, homepaid = new
+// services whose invoice batch has a receipt, block = currently blocked.
 function getHomepaidCount(snapshot: ServiceMonthlySnapshot): number {
-  // Homepaid = sudah connect DAN sudah bayar (subset dari homeconnect)
-  return snapshot.isRegisteredInPeriod && snapshot.isConnectedInPeriod && snapshot.isPaidInPeriod ? 1 : 0;
+  return snapshot.newPaidCount;
 }
 
 function getHomeconnectCount(snapshot: ServiceMonthlySnapshot): number {
-  // Homeconnect = sudah connect (paid atau belum) = subset dari total baru
-  return snapshot.isRegisteredInPeriod && snapshot.isConnectedInPeriod ? 1 : 0;
+  return snapshot.newConnectedCount;
 }
 
 function getBlockCount(snapshot: ServiceMonthlySnapshot): number {
-  return snapshot.isRegisteredInPeriod && snapshot.isBlockedInPeriod ? 1 : 0;
+  return snapshot.newBlockedCount;
 }
 
 import {
@@ -182,7 +183,6 @@ export function getNewServiceCurrentLevel(
     "branch",
     "service_group",
     "service",
-    "customer",
   ];
   const salesLevels: TotalServiceRowLevel[] = [
     "branch",
@@ -202,7 +202,6 @@ export function getNextRowLevel(
     "branch",
     "service_group",
     "service",
-    "customer",
   ];
   const salesFlow: TotalServiceRowLevel[] = ["branch", "lead_am", "am", "service"];
   const flow = povMode === "operational" ? operationalFlow : salesFlow;
@@ -543,9 +542,10 @@ function buildTrendChildRows(
       const homeconnect = buildMetricCell(rowSnapshots, rowPrevSnapshots, getHomeconnectCount);
       const block = buildMetricCell(rowSnapshots, rowPrevSnapshots, getBlockCount);
 
+      // homepaid ⊆ homeconnect, so the connection rate is just homeconnect/total.
       const connectionRate =
         totalNewService.value > 0
-          ? roundToTwo(((homeconnect.value + homepaid.value) / totalNewService.value) * 100)
+          ? roundToTwo((homeconnect.value / totalNewService.value) * 100)
           : 0;
 
       const paymentRate =
@@ -612,7 +612,7 @@ function buildNewServiceTrendRows(
 
     const connectionRate =
       totalNewService.value > 0
-        ? roundToTwo(((homeconnect.value + homepaid.value) / totalNewService.value) * 100)
+        ? roundToTwo((homeconnect.value / totalNewService.value) * 100)
         : 0;
 
     const paymentRate =

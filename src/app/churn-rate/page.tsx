@@ -20,11 +20,6 @@ import MatrixTable from "@/components/matrix-table";
 import LoadingState from "@/components/loading-state";
 import { DetailTableModal } from "@/components/detail-table-modal";
 import {
-  getServiceStartPeriods,
-  filterSnapshotsByTenure,
-  processDashboardData,
-} from "@/services/churn-rate";
-import {
   TotalServiceDashboardState,
   TotalServiceMetricMode,
   UserAccessScope,
@@ -32,6 +27,7 @@ import {
 import { useDashboardFilters } from "@/hooks/use-dashboard-filters";
 import { useSnapshots } from "@/hooks/use-snapshots";
 import { useDetailRows } from "@/hooks/use-detail-rows";
+import { levelLabelId, periodLabelId } from "@/lib/detail-context";
 
 const HEAD_OFFICE_ACCESS: UserAccessScope = {
   userId: "user-ho-001",
@@ -81,17 +77,9 @@ function ChurnRateDashboard() {
     return set;
   }, [year, compareYear]);
 
-  const { snapshots, nodes, loading, error } = useSnapshots(yearsToFetch);
-
-  // Service start periods derived from the fetched window (tenure filtering).
-  const serviceStartPeriods = useMemo(() => {
-    return getServiceStartPeriods(snapshots);
-  }, [snapshots]);
-
-  // Filter snapshots based on tenure filter selection
-  const filteredSnapshotsByTenure = useMemo(() => {
-    return filterSnapshotsByTenure(snapshots, serviceStartPeriods, tenureFilter);
-  }, [snapshots, serviceStartPeriods, tenureFilter]);
+  // Tenure is computed server-side from the real activation date of each
+  // service (measured at each snapshot month) — the API filters in SQL.
+  const { snapshots, nodes, loading, error } = useSnapshots(yearsToFetch, tenureFilter);
 
   const dashboardState = useMemo<TotalServiceDashboardState>(() => {
     return {
@@ -115,19 +103,14 @@ function ChurnRateDashboard() {
     };
   }, [year, compareYear, povMode, metricMode, granularity]);
 
-  const rawDashboard = useMemo(() => {
+  const dashboard = useMemo(() => {
     return buildTotalServiceV2DashboardData({
-      snapshots: filteredSnapshotsByTenure,
+      snapshots,
       nodes,
       access: HEAD_OFFICE_ACCESS,
       state: dashboardState,
     });
-  }, [dashboardState, filteredSnapshotsByTenure, nodes]);
-
-  // Transform monthly snapshots to churn values matching the monthly layout
-  const dashboard = useMemo(() => {
-    return processDashboardData(rawDashboard);
-  }, [rawDashboard]);
+  }, [dashboardState, snapshots, nodes]);
 
   // Click-scoped churn detail straight from the API.
   const detailPeriods = useMemo(() => {
@@ -147,18 +130,30 @@ function ChurnRateDashboard() {
       level: detailModal.level,
       entityId: detailModal.entityId,
       metric: "churn",
+      tenure: tenureFilter !== "all" ? tenureFilter : null,
     },
     detailModal.isOpen,
   );
 
   const TENURE_OPTIONS = [
-    { value: "all",        label: "Semua" },
+    { value: "all",       label: "Semua" },
     { value: "lt_1_year", label: "< 1 tahun" },
+    { value: "1_2_years", label: "1–2 tahun" },
     { value: "2_3_years", label: "2–3 tahun" },
     { value: "3_4_years", label: "3–4 tahun" },
     { value: "4_5_years", label: "4–5 tahun" },
     { value: "gt_5_year", label: "> 5 tahun" },
   ];
+
+  const tenureLabel = TENURE_OPTIONS.find((o) => o.value === tenureFilter)?.label;
+
+  const detailContext = {
+    metricLabel: "Churn",
+    levelLabel: levelLabelId(detailModal.level),
+    entityLabel: detailModal.label,
+    periodLabel: periodLabelId(detailModal.period, year),
+    extraLabel: tenureFilter !== "all" && tenureLabel ? `Tenure ${tenureLabel}` : null,
+  };
 
   const tenureControl = (
     <FormControl size="small" sx={{ minWidth: 160 }}>
@@ -278,6 +273,7 @@ function ChurnRateDashboard() {
         showBandwidth={false}
         showRevenue={false}
         metricMode={metricMode}
+        context={detailContext}
       />
     </Box>
   );

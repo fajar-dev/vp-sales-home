@@ -133,72 +133,46 @@ function getLatestGeneratedAt(
   }, null as string | null)
 }
 
+/**
+ * Data-integrity checks over the aggregated rows. Issues are summarized per
+ * code (with an affected-row count) so a widespread mapping problem shows up
+ * as one warning, not thousands.
+ */
 export function collectTotalServiceWarnings(
   snapshots: ServiceMonthlySnapshot[],
 ): TotalServiceWarning[] {
-  const warnings: TotalServiceWarning[] = []
-  const seenByPeriodAndService = new Set<string>()
+  let missingBranch = 0
+  let unmappedGroup = 0
+  let partialData = 0
 
   for (const snapshot of snapshots) {
-    const duplicateKey = `${snapshot.period}::${snapshot.serviceId}`
-
-    if (seenByPeriodAndService.has(duplicateKey)) {
-      warnings.push({
-        code: "DUPLICATE_SNAPSHOT",
-        severity: "error",
-        message: `Duplicate snapshot ditemukan untuk service ${snapshot.serviceId} pada period ${snapshot.period}.`,
-        snapshotId: snapshot.snapshotId,
-      })
-    } else {
-      seenByPeriodAndService.add(duplicateKey)
-    }
-
-    if (snapshot.isActiveEndOfPeriod && snapshot.isChurnedInPeriod) {
-      warnings.push({
-        code: "INVALID_ACTIVE_AND_CHURN",
-        severity: "error",
-        message: `Snapshot ${snapshot.snapshotId} menandai active dan churn secara bersamaan.`,
-        snapshotId: snapshot.snapshotId,
-      })
-    }
-
-    if (snapshot.isActiveEndOfPeriod && snapshot.isBlockedInPeriod) {
-      warnings.push({
-        code: "INVALID_ACTIVE_AND_BLOCK",
-        severity: "warning",
-        message: `Snapshot ${snapshot.snapshotId} menandai active dan blocked secara bersamaan.`,
-        snapshotId: snapshot.snapshotId,
-      })
-    }
-
-    if (!snapshot.branchId) {
-      warnings.push({
-        code: "MISSING_BRANCH",
-        severity: "error",
-        message: `Snapshot ${snapshot.snapshotId} tidak memiliki branchId.`,
-        snapshotId: snapshot.snapshotId,
-      })
-    }
-
-    if (!snapshot.serviceGroup?.trim()) {
-      warnings.push({
-        code: "UNMAPPED_SERVICE_GROUP",
-        severity: "warning",
-        message: `Snapshot ${snapshot.snapshotId} tidak memiliki service group dan akan dimasukkan ke Unmapped.`,
-        snapshotId: snapshot.snapshotId,
-      })
-    }
-
-    if (snapshot.dataCompletenessStatus !== "complete") {
-      warnings.push({
-        code: "PARTIAL_DATA",
-        severity: snapshot.dataCompletenessStatus === "missing_dependency" ? "error" : "warning",
-        message: `Snapshot ${snapshot.snapshotId} memiliki status data ${snapshot.dataCompletenessStatus}.`,
-        snapshotId: snapshot.snapshotId,
-      })
-    }
+    if (!snapshot.branchId || snapshot.branchId === "unmapped-branch") missingBranch += 1
+    if (!snapshot.serviceGroup?.trim() || snapshot.serviceGroup === "Unmapped") unmappedGroup += 1
+    if (snapshot.dataCompletenessStatus !== "complete") partialData += 1
   }
 
+  const warnings: TotalServiceWarning[] = []
+  if (missingBranch > 0) {
+    warnings.push({
+      code: "MISSING_BRANCH",
+      severity: "error",
+      message: `${missingBranch} baris data tidak memiliki pemetaan cabang.`,
+    })
+  }
+  if (unmappedGroup > 0) {
+    warnings.push({
+      code: "UNMAPPED_SERVICE_GROUP",
+      severity: "warning",
+      message: `${unmappedGroup} baris data tanpa grup layanan — ditampilkan sebagai "Unmapped".`,
+    })
+  }
+  if (partialData > 0) {
+    warnings.push({
+      code: "PARTIAL_DATA",
+      severity: "warning",
+      message: `${partialData} baris data berstatus tidak lengkap.`,
+    })
+  }
   return warnings
 }
 
@@ -237,11 +211,12 @@ export function getTotalServiceV2RootLevel(): TotalServiceRowLevel {
 export function getTotalServiceV2CurrentLevel(
   state: TotalServiceDashboardState,
 ): TotalServiceRowLevel {
+  // Customer level is served by the detail modal (click a row/cell), not the
+  // matrix tree — aggregated rows do not carry per-customer data.
   const operationalLevels: TotalServiceRowLevel[] = [
     "branch",
     "service_group",
     "service",
-    "customer",
   ]
 
   const salesLevels: TotalServiceRowLevel[] = [
@@ -263,7 +238,6 @@ export function getNextRowLevel(
     "branch",
     "service_group",
     "service",
-    "customer",
   ]
   const salesFlow: TotalServiceRowLevel[] = ["branch", "lead_am", "am", "service"]
 
@@ -905,189 +879,3 @@ export function buildTotalServiceV2ExportFileName(params: {
   ].join("-") + ".csv"
 }
 
-import { getServiceStartPeriods } from "@/domain/calculators/metric-aggregation.calculator"
-
-export { getServiceStartPeriods }
-
-
-export interface EnrichedModalRow {
-  serviceId: string
-  customerName: string
-  serviceName: string
-  branchName: string | null
-  leadName: string | null
-  amName: string | null
-  serviceGroup: string
-  installationAddress: string
-  generatedAt: string
-  currentStatus: "churned" | "active" | "inactive"
-  currentTotalActive: number
-  bandwidthMbps: number
-  expectedRevenue: number
-  activeDate?: string
-  churnDate?: string
-  tenureText?: string
-}
-
-export function getEnrichedRowsForModal(params: {
-  detailModal: { isOpen: boolean; entityId: string | null; level: string | null; period: string | null }
-  year: number
-  buckets: Array<{ key: string; periods: string[] }>
-  metricMode: string
-  snapshots: ServiceMonthlySnapshot[]
-  organizationNodes: OrganizationNode[]
-  subMetricFilter?: string | null
-}): EnrichedModalRow[] {
-  const { detailModal, year, buckets, metricMode, snapshots, organizationNodes, subMetricFilter } = params
-  // Allow period-only opens (e.g. clicking a period row in TrendMatrixTable):
-  // entityId and level can be null as long as a period is provided.
-  if (!detailModal.isOpen) return []
-  if (!detailModal.entityId && !detailModal.period) return []
-
-  let targetPeriods: string[] = []
-  if (detailModal.period) {
-    const bucket = buckets.find((b) => b.key === detailModal.period)
-    if (bucket) {
-      targetPeriods = bucket.periods
-    } else {
-      targetPeriods = [detailModal.period]
-    }
-  }
-
-  const relevantSnapshots = snapshots.filter((s) => {
-    if (targetPeriods.length > 0) {
-      if (!targetPeriods.includes(s.period)) return false
-    } else {
-      if (!s.period.startsWith(String(year))) return false
-    }
-
-    if (detailModal.level === "branch") return s.branchId === detailModal.entityId
-    if (detailModal.level === "lead_am") return s.leadId === detailModal.entityId
-    if (detailModal.level === "am") return s.amId === detailModal.entityId
-    if (detailModal.level === "service_group") return s.serviceGroup === detailModal.entityId
-    if (detailModal.level === "service") return s.serviceId === detailModal.entityId
-    return true
-  })
-
-  const filteredSnapshots: ServiceMonthlySnapshot[] = []
-
-  if (metricMode === "total_service") {
-    const availablePeriods = Array.from(new Set(relevantSnapshots.map((s) => s.period)))
-      .sort()
-      .reverse()
-    const lastPeriod = availablePeriods[0]
-
-    relevantSnapshots
-      .filter((s) => s.period === lastPeriod && s.activeServiceCount > 0)
-      .forEach((s) => filteredSnapshots.push(s))
-  } else if (metricMode === "new_service") {
-    const serviceIds = new Set<string>()
-    relevantSnapshots.forEach((s) => {
-      if (s.newServiceCount > 0 || s.isRegisteredInPeriod) serviceIds.add(s.serviceId)
-    })
-    serviceIds.forEach((id) => {
-      const firstNew = relevantSnapshots
-        .filter((s) => s.serviceId === id && (s.newServiceCount > 0 || s.isRegisteredInPeriod))
-        .sort((a, b) => a.period.localeCompare(b.period))[0]
-      if (firstNew) filteredSnapshots.push(firstNew)
-    })
-
-    // Apply sub-metric filter: only keep services matching the clicked column
-    if (subMetricFilter === "homepaid") {
-      const keep = filteredSnapshots.filter((s) => s.isPaidInPeriod)
-      filteredSnapshots.length = 0
-      keep.forEach((s) => filteredSnapshots.push(s))
-    } else if (subMetricFilter === "homeconnect") {
-      const keep = filteredSnapshots.filter((s) => s.isConnectedInPeriod)
-      filteredSnapshots.length = 0
-      keep.forEach((s) => filteredSnapshots.push(s))
-    } else if (subMetricFilter === "block") {
-      const keep = filteredSnapshots.filter((s) => s.isBlockedInPeriod)
-      filteredSnapshots.length = 0
-      keep.forEach((s) => filteredSnapshots.push(s))
-    }
-  } else if (metricMode === "churn") {
-    const serviceIds = new Set<string>()
-    relevantSnapshots.forEach((s) => {
-      if (s.churnServiceCount > 0 || s.isChurnedInPeriod) serviceIds.add(s.serviceId)
-    })
-    serviceIds.forEach((id) => {
-      const firstChurn = relevantSnapshots
-        .filter((s) => s.serviceId === id && (s.churnServiceCount > 0 || s.isChurnedInPeriod))
-        .sort((a, b) => a.period.localeCompare(b.period))[0]
-      if (firstChurn) filteredSnapshots.push(firstChurn)
-    })
-  } else {
-    // If not matching any specific metric mode, just return all relevant snapshots (as in basic page fallback)
-    relevantSnapshots.forEach((s) => filteredSnapshots.push(s))
-  }
-
-  const nodeMap = new Map(organizationNodes.map((n) => [n.id, n]))
-  const serviceStartPeriods = getServiceStartPeriods(snapshots)
-
-  return filteredSnapshots.map((snapshot) => {
-    const idNumber = snapshot.serviceId.split("-")[1] || "000"
-    const idInt = parseInt(idNumber)
-
-    // For new_service: activeDate = period when service was first registered (snapshot.period),
-    // because filteredSnapshots already holds the first snapshot where isRegisteredInPeriod === true.
-    // For other modes: use the simulated/historical start period from serviceStartPeriods.
-    const startPeriod = metricMode === "new_service"
-      ? snapshot.period
-      : (serviceStartPeriods.get(snapshot.serviceId) || snapshot.period)
-    const activeDay = 1 + (idInt % 25)
-    const activeDate = `${startPeriod}-${String(activeDay).padStart(2, "0")}`
-
-    let churnDate: string | undefined = undefined
-    let tenureText: string | undefined = undefined
-
-    if (metricMode === "churn" || snapshot.isChurnedInPeriod) {
-      const churnDay = 1 + ((idInt + 12) % 25)
-      churnDate = `${snapshot.period}-${String(churnDay).padStart(2, "0")}`
-
-      const startDate = new Date(activeDate)
-      const endDate = new Date(churnDate)
-      
-      let years = endDate.getFullYear() - startDate.getFullYear()
-      let months = endDate.getMonth() - startDate.getMonth()
-      let days = endDate.getDate() - startDate.getDate()
-      
-      if (days < 0) {
-        months -= 1
-        const prevMonth = new Date(endDate.getFullYear(), endDate.getMonth(), 0)
-        days += prevMonth.getDate()
-      }
-      
-      if (months < 0) {
-        years -= 1
-        months += 12
-      }
-      
-      const parts: string[] = []
-      if (years > 0) parts.push(`${years} tahun`)
-      if (months > 0) parts.push(`${months} bulan`)
-      if (days > 0) parts.push(`${days} hari`)
-      
-      tenureText = parts.length > 0 ? parts.join(" ") : "0 hari"
-    }
-
-    return {
-      serviceId: snapshot.serviceId,
-      customerName: `Customer ${idNumber}`,
-      serviceName: `Service Package ${idNumber}`,
-      branchName: nodeMap.get(snapshot.branchId)?.name ?? null,
-      leadName: snapshot.leadId ? nodeMap.get(snapshot.leadId)?.name ?? null : null,
-      amName: snapshot.amId ? nodeMap.get(snapshot.amId)?.name ?? null : null,
-      serviceGroup: snapshot.serviceGroup,
-      installationAddress: `Jalan Sudirman No. ${idNumber}, Kota ${nodeMap.get(snapshot.branchId)?.name ?? "Unknown"}`,
-      generatedAt: snapshot.generatedAt,
-      currentStatus: snapshot.isChurnedInPeriod ? "churned" : snapshot.isActiveEndOfPeriod ? "active" : "inactive",
-      currentTotalActive: snapshot.activeServiceCount,
-      bandwidthMbps: idInt % 3 === 0 ? 100 : idInt % 2 === 0 ? 50 : 20,
-      expectedRevenue: snapshot.expectedRevenue,
-      activeDate,
-      churnDate,
-      tenureText,
-    }
-  })
-}

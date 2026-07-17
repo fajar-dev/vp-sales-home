@@ -27,6 +27,7 @@ import {
 import { useDashboardFilters } from "@/hooks/use-dashboard-filters";
 import { useSnapshots } from "@/hooks/use-snapshots";
 import { useDetailRows } from "@/hooks/use-detail-rows";
+import { levelLabelId, periodLabelId } from "@/lib/detail-context";
 
 // Head-office scope: sees every branch present in the data.
 const HEAD_OFFICE_ACCESS: UserAccessScope = {
@@ -123,8 +124,10 @@ function TotalServiceDashboard() {
     return dashboard.buckets.flatMap((b) => b.periods);
   }, [detailModal, dashboard.buckets]);
 
+  // "Pertumbuhan Baru" lists activation-driven rows; the other metrics list
+  // monthly status rows filtered by the matching status in SQL.
   const detailType = metricMode === "new_service" ? "new_service" : "service";
-  const detailMetricParam = metricMode === "churn" ? "churn" : metricMode === "new_service" ? "new_service" : "total_service";
+  const detailMetricParam = metricMode === "churn" ? "churn" : "total_service";
 
   const { rows: enrichedRowsForModal, loading: detailLoading } = useDetailRows(
     "/api/detail",
@@ -133,10 +136,24 @@ function TotalServiceDashboard() {
       periods: detailPeriods.join(","),
       level: detailModal.level,
       entityId: detailModal.entityId,
-      metric: detailMetricParam,
+      metric: detailType === "service" ? detailMetricParam : null,
     },
     detailModal.isOpen,
   );
+
+  const metricLabels: Record<string, string> = {
+    total_service: "Layanan Aktif",
+    new_service: "Pertumbuhan Baru",
+    churn: "Churn",
+    accumulation: "Akumulasi",
+  };
+
+  const detailContext = {
+    metricLabel: metricLabels[metricMode] ?? metricMode,
+    levelLabel: levelLabelId(detailModal.level),
+    entityLabel: detailModal.label,
+    periodLabel: periodLabelId(detailModal.period, year),
+  };
 
   return (
     <Box
@@ -287,6 +304,7 @@ function TotalServiceDashboard() {
         showBandwidth={false}
         showRevenue={false}
         metricMode={metricMode}
+        context={detailContext}
       />
     </Box>
   );
