@@ -76,16 +76,14 @@ export function getNewServiceCount(snapshot: ServiceMonthlySnapshot): number {
   return snapshot.isRegisteredInPeriod ? 1 : 0;
 }
 
+/** New services whose invoice has been paid (real payment data from server). */
 export function getHomepaidCount(snapshot: ServiceMonthlySnapshot): number {
-  return snapshot.isRegisteredInPeriod &&
-    snapshot.isConnectedInPeriod &&
-    snapshot.isPaidInPeriod
-    ? 1
-    : 0;
+  return snapshot.newPaidCount;
 }
 
+/** New services that already have an invoice (billed / connected). */
 export function getHomeconnectCount(snapshot: ServiceMonthlySnapshot): number {
-  return snapshot.isRegisteredInPeriod && snapshot.isConnectedInPeriod ? 1 : 0;
+  return snapshot.newConnectedCount;
 }
 
 /**
@@ -104,36 +102,3 @@ export function getStockValueAtLatestPeriod(
     .reduce((total, snapshot) => total + getActiveCount(snapshot), 0);
 }
 
-/**
- * Maps service IDs to their first start period (simulated/historical for tenure calculation).
- */
-export function getServiceStartPeriods(
-  snapshots: ServiceMonthlySnapshot[],
-): Map<string, string> {
-  const map = new Map<string, string>();
-  snapshots.forEach((s) => {
-    const existing = map.get(s.serviceId);
-    if (!existing || s.period < existing) {
-      map.set(s.serviceId, s.period);
-    }
-  });
-
-  const simulatedMap = new Map<string, string>();
-  map.forEach((actualStart, serviceId) => {
-    const num = parseInt(serviceId.replace(/\D/g, "")) || 0;
-    let start = actualStart;
-    if (num % 7 === 0) {
-      start = "2020-01"; // > 5 years tenure
-    } else if (num % 5 === 0) {
-      start = "2021-01"; // 4-5 years tenure
-    } else if (num % 3 === 0) {
-      start = "2022-01"; // 3-4 years tenure
-    } else if (num % 2 === 0) {
-      start = "2023-01"; // 2-3 years tenure
-    } else {
-      start = num % 9 === 0 ? "2025-01" : actualStart;
-    }
-    simulatedMap.set(serviceId, start);
-  });
-  return simulatedMap;
-}

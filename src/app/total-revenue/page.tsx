@@ -27,6 +27,7 @@ import {
   getMetricValueForBucket,
   buildRevenueRows,
 } from "@/services/total-revenue";
+import { levelLabelId, periodLabelId } from "@/lib/detail-context";
 
 // V2 expected/actual revenue aggregation implementation
 function TotalRevenueDashboard() {
@@ -91,17 +92,37 @@ function TotalRevenueDashboard() {
     return timeBuckets.flatMap((b) => b.periods);
   }, [detailModal, timeBuckets]);
 
+  // Revenue-gap opens list unpaid lines for the selected year only.
+  const gapPeriods = useMemo(
+    () => Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`),
+    [year],
+  );
+
   const { rows: enrichedRowsForModal, loading: detailLoading } = useDetailRows(
     "/api/detail",
     {
       type: "revenue",
-      years: yearsToFetch.join(","),
-      periods: detailModal.level === "revenue_gap" ? "" : detailPeriods.join(","),
+      periods:
+        detailModal.level === "revenue_gap"
+          ? gapPeriods.join(",")
+          : detailPeriods.join(","),
       level: detailModal.level,
       entityId: detailModal.entityId,
+      unpaid: detailModal.level === "revenue_gap" ? "1" : null,
     },
     detailModal.isOpen,
   );
+
+  const detailContext = {
+    metricLabel: detailModal.level === "revenue_gap" ? "Kesenjangan Pendapatan" : "Pendapatan",
+    levelLabel: detailModal.level === "revenue_gap" ? null : levelLabelId(detailModal.level),
+    entityLabel: detailModal.level === "revenue_gap" ? null : detailModal.label,
+    periodLabel:
+      detailModal.level === "revenue_gap"
+        ? `Semua bulan ${year}`
+        : periodLabelId(detailModal.period, year),
+    extraLabel: detailModal.level === "revenue_gap" ? "Hanya tagihan belum dibayar" : null,
+  };
 
   // Comparison year time buckets for annual comparison calculations
   const comparisonYear = compareYear !== null ? compareYear : (year - 1);
@@ -139,7 +160,6 @@ function TotalRevenueDashboard() {
   const deltaMetricPercentage = previousMetricTotal === 0 ? 0 : Math.round((deltaMetric / previousMetricTotal) * 100);
 
   const deltaActualRevenue = totalActualRevenue - previousActualRevenue;
-  const deltaActualPercentage = previousActualRevenue === 0 ? 0 : Math.round((deltaActualRevenue / previousActualRevenue) * 100);
 
   const deltaExpectedRevenue = totalExpectedRevenue - previousExpectedRevenue;
   const deltaExpectedPercentage = previousExpectedRevenue === 0 ? 0 : Math.round((deltaExpectedRevenue / previousExpectedRevenue) * 100);
@@ -205,13 +225,13 @@ function TotalRevenueDashboard() {
             gridTemplateColumns: {
               xs: "1fr",
               sm: "repeat(2, 1fr)",
-              md: "repeat(5, 1fr)",
+              md: "repeat(4, 1fr)",
             },
             gap: 2,
             mb: 4,
           }}
         >
-          {/* Card 1: Total Revenue */}
+          {/* Card 1: Total Tagihan (Proyeksi) */}
           <Card
             elevation={0}
             sx={{
@@ -223,13 +243,47 @@ function TotalRevenueDashboard() {
           >
             <CardContent sx={{ p: 2, "&:last-child": { pb: 2 } }}>
               <Typography variant="body2" sx={{ fontWeight: 500, color: "text.secondary" }}>
-                Total Pendapatan
+                Total Tagihan (Proyeksi)
+              </Typography>
+              <Typography variant="h4" sx={{ fontWeight: 700, mt: 1, mb: 0.5, color: "text.primary" }}>
+                {formatRupiah(totalExpectedRevenue)}
+              </Typography>
+              <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
+                Seluruh nilai tagihan yang diterbitkan tahun ini
+              </Typography>
+              <Chip
+                label={`${deltaExpectedPercentage >= 0 ? "+" : ""}${deltaExpectedPercentage}% vs ${comparisonYear}`}
+                size="small"
+                sx={{
+                  mt: 1.5,
+                  fontWeight: 600,
+                  fontSize: "11px",
+                  bgcolor: (theme) => alpha(theme.palette[deltaExpectedPercentage >= 0 ? "success" : "error"].main, 0.12),
+                  color: (theme) => theme.palette[deltaExpectedPercentage >= 0 ? "success" : "error"].dark,
+                }}
+              />
+            </CardContent>
+          </Card>
+
+          {/* Card 2: Total Terbayar */}
+          <Card
+            elevation={0}
+            sx={{
+              borderRadius: "16px",
+              border: "1px solid",
+              borderColor: "divider",
+              backgroundColor: "background.paper",
+            }}
+          >
+            <CardContent sx={{ p: 2, "&:last-child": { pb: 2 } }}>
+              <Typography variant="body2" sx={{ fontWeight: 500, color: "text.secondary" }}>
+                Total Terbayar
               </Typography>
               <Typography variant="h4" sx={{ fontWeight: 700, mt: 1, mb: 0.5, color: "text.primary" }}>
                 {formatRupiah(totalActualRevenue)}
               </Typography>
               <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
-                Pendapatan terealisasi berdasarkan pembayaran
+                Tagihan yang sudah lunas (ada kwitansi pembayaran)
               </Typography>
               <Chip
                 label={`${deltaActualRevenue >= 0 ? "+" : ""}${formatRupiah(deltaActualRevenue)} vs ${comparisonYear}`}
@@ -245,75 +299,7 @@ function TotalRevenueDashboard() {
             </CardContent>
           </Card>
 
-          {/* Card 2: Homepaid Revenue */}
-          <Card
-            elevation={0}
-            sx={{
-              borderRadius: "16px",
-              border: "1px solid",
-              borderColor: "divider",
-              backgroundColor: "background.paper",
-            }}
-          >
-            <CardContent sx={{ p: 2, "&:last-child": { pb: 2 } }}>
-              <Typography variant="body2" sx={{ fontWeight: 500, color: "text.secondary" }}>
-                Homepaid Revenue
-              </Typography>
-              <Typography variant="h4" sx={{ fontWeight: 700, mt: 1, mb: 0.5, color: "text.primary" }}>
-                {formatRupiah(totalActualRevenue)}
-              </Typography>
-              <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
-                Pendapatan aktual dari layanan berbayar
-              </Typography>
-              <Chip
-                label={`${deltaActualPercentage >= 0 ? "+" : ""}${deltaActualPercentage}% vs ${comparisonYear}`}
-                size="small"
-                sx={{
-                  mt: 1.5,
-                  fontWeight: 600,
-                  fontSize: "11px",
-                  bgcolor: (theme) => alpha(theme.palette[deltaActualPercentage >= 0 ? "success" : "error"].main, 0.12),
-                  color: (theme) => theme.palette[deltaActualPercentage >= 0 ? "success" : "error"].dark,
-                }}
-              />
-            </CardContent>
-          </Card>
-
-          {/* Card 3: Expected Growth */}
-          <Card
-            elevation={0}
-            sx={{
-              borderRadius: "16px",
-              border: "1px solid",
-              borderColor: "divider",
-              backgroundColor: "background.paper",
-            }}
-          >
-            <CardContent sx={{ p: 2, "&:last-child": { pb: 2 } }}>
-              <Typography variant="body2" sx={{ fontWeight: 500, color: "text.secondary" }}>
-                Proyeksi Pertumbuhan
-              </Typography>
-              <Typography variant="h4" sx={{ fontWeight: 700, mt: 1, mb: 0.5, color: "text.primary" }}>
-                {`${deltaMetricPercentage >= 0 ? "+" : ""}${deltaMetricPercentage}%`}
-              </Typography>
-              <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
-                Pertumbuhan kontrak vs periode pembanding
-              </Typography>
-              <Chip
-                label={`${deltaMetric >= 0 ? "+" : ""}${formatRupiah(deltaMetric)} vs ${comparisonYear}`}
-                size="small"
-                sx={{
-                  mt: 1.5,
-                  fontWeight: 600,
-                  fontSize: "11px",
-                  bgcolor: (theme) => alpha(theme.palette[deltaMetric >= 0 ? "success" : "error"].main, 0.12),
-                  color: (theme) => theme.palette[deltaMetric >= 0 ? "success" : "error"].dark,
-                }}
-              />
-            </CardContent>
-          </Card>
-
-          {/* Card 4: Revenue Gap */}
+          {/* Card 3: Revenue Gap (klik untuk daftar tagihan belum dibayar) */}
           <Card
             elevation={0}
             sx={{
@@ -353,7 +339,7 @@ function TotalRevenueDashboard() {
                 {formatRupiah(revenueGap)}
               </Typography>
               <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
-                Proyeksi dikurangi pendapatan aktual
+                Tagihan yang belum dibayar — klik untuk melihat daftarnya
               </Typography>
               <Chip
                 label={`${deltaRevenueGap >= 0 ? "+" : ""}${formatRupiah(deltaRevenueGap)} vs ${comparisonYear}`}
@@ -369,7 +355,7 @@ function TotalRevenueDashboard() {
             </CardContent>
           </Card>
 
-          {/* Card 5: Homeconnect Revenue */}
+          {/* Card 4: Pertumbuhan Tagihan */}
           <Card
             elevation={0}
             sx={{
@@ -381,23 +367,23 @@ function TotalRevenueDashboard() {
           >
             <CardContent sx={{ p: 2, "&:last-child": { pb: 2 } }}>
               <Typography variant="body2" sx={{ fontWeight: 500, color: "text.secondary" }}>
-                Homeconnect Revenue
+                Pertumbuhan Tagihan
               </Typography>
               <Typography variant="h4" sx={{ fontWeight: 700, mt: 1, mb: 0.5, color: "text.primary" }}>
-                {formatRupiah(totalExpectedRevenue)}
+                {`${deltaMetricPercentage >= 0 ? "+" : ""}${deltaMetricPercentage}%`}
               </Typography>
               <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
-                Proyeksi pendapatan dari layanan terkoneksi
+                Perubahan total tagihan vs periode pembanding
               </Typography>
               <Chip
-                label={`${deltaExpectedPercentage >= 0 ? "+" : ""}${deltaExpectedPercentage}% vs ${comparisonYear}`}
+                label={`${deltaMetric >= 0 ? "+" : ""}${formatRupiah(deltaMetric)} vs ${comparisonYear}`}
                 size="small"
                 sx={{
                   mt: 1.5,
                   fontWeight: 600,
                   fontSize: "11px",
-                  bgcolor: (theme) => alpha(theme.palette[deltaExpectedPercentage >= 0 ? "success" : "error"].main, 0.12),
-                  color: (theme) => theme.palette[deltaExpectedPercentage >= 0 ? "success" : "error"].dark,
+                  bgcolor: (theme) => alpha(theme.palette[deltaMetric >= 0 ? "success" : "error"].main, 0.12),
+                  color: (theme) => theme.palette[deltaMetric >= 0 ? "success" : "error"].dark,
                 }}
               />
             </CardContent>
@@ -469,6 +455,7 @@ function TotalRevenueDashboard() {
         showRevenue={true}
         showBandwidth={false}
         metricMode="revenue_gap"
+        context={detailContext}
       />
     </Box>
   );

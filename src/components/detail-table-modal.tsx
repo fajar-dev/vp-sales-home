@@ -52,6 +52,23 @@ export interface EnrichedDetailRow {
   receiptNumber?: string | null;
 }
 
+/**
+ * Describes the click that opened the modal so the user can see exactly
+ * which slice of data is listed (metric × entity × period × sub-filter).
+ */
+export interface DetailClickContext {
+  /** Metric behind the clicked number, e.g. "Churn", "Layanan Aktif". */
+  metricLabel?: string | null;
+  /** Hierarchy level of the clicked row, e.g. "Cabang", "AM". */
+  levelLabel?: string | null;
+  /** Entity name of the clicked row, e.g. "Medan Multatuli". */
+  entityLabel?: string | null;
+  /** Period scope, e.g. "Juni 2025" or "Semua bulan 2025". */
+  periodLabel?: string | null;
+  /** Extra filter, e.g. "Tenure 2–3 tahun" or "Hanya belum dibayar". */
+  extraLabel?: string | null;
+}
+
 interface DetailTableModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -62,6 +79,7 @@ interface DetailTableModalProps {
   showBandwidth?: boolean;
   loading?: boolean;
   metricMode?: "total_service" | "new_service" | "churn" | "accumulation" | "revenue_gap";
+  context?: DetailClickContext | null;
 }
 
 type SortField = "default" | "customerName" | "serviceName" | "branchName" | "currentStatus" | "currentTotalActive" | "expectedRevenue" | "activeDate" | "churnDate" | "tenureText" | "invoiceNumber" | "receiptNumber" | "period";
@@ -107,7 +125,8 @@ export function DetailTableModal({
   showRevenue = false,
   showBandwidth = true,
   loading = false,
-  metricMode
+  metricMode,
+  context = null
 }: DetailTableModalProps) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -225,6 +244,26 @@ export function DetailTableModal({
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
             {subtitle}
           </Typography>
+          {context && (
+            <Stack direction="row" spacing={0.75} useFlexGap sx={{ mt: 1.25, flexWrap: "wrap" }}>
+              {context.metricLabel && (
+                <Chip size="small" label={`Metrik: ${context.metricLabel}`} sx={{ fontWeight: 600, fontSize: "11px", bgcolor: "#eff6ff", color: "#1d4ed8" }} />
+              )}
+              {context.entityLabel && (
+                <Chip
+                  size="small"
+                  label={context.levelLabel ? `${context.levelLabel}: ${context.entityLabel}` : context.entityLabel}
+                  sx={{ fontWeight: 600, fontSize: "11px", bgcolor: "#f0fdf4", color: "#15803d" }}
+                />
+              )}
+              {context.periodLabel && (
+                <Chip size="small" label={`Periode: ${context.periodLabel}`} sx={{ fontWeight: 600, fontSize: "11px", bgcolor: "#fefce8", color: "#a16207" }} />
+              )}
+              {context.extraLabel && (
+                <Chip size="small" label={context.extraLabel} sx={{ fontWeight: 600, fontSize: "11px", bgcolor: "#faf5ff", color: "#7e22ce" }} />
+              )}
+            </Stack>
+          )}
         </Box>
         <IconButton
           aria-label="close"
@@ -337,18 +376,14 @@ export function DetailTableModal({
                 )}
                 {!metricMode && <MenuItem value="currentTotalActive" sx={{ fontSize: "13px", fontWeight: 500 }}>Layanan aktif saat ini</MenuItem>}
                 <MenuItem value="activeDate" sx={{ fontSize: "13px", fontWeight: 500 }}>Tanggal aktif</MenuItem>
-                {metricMode === "churn" && (
-                  <>
-                    <MenuItem value="churnDate" sx={{ fontSize: "13px", fontWeight: 500 }}>Tanggal blok</MenuItem>
-                    <MenuItem value="tenureText" sx={{ fontSize: "13px", fontWeight: 500 }}>Lama berlangganan</MenuItem>
-                  </>
-                )}
-                {metricMode === "revenue_gap" && (
-                  <>
-                    <MenuItem value="invoiceNumber" sx={{ fontSize: "13px", fontWeight: 500 }}>Invoice</MenuItem>
-                    <MenuItem value="receiptNumber" sx={{ fontSize: "13px", fontWeight: 500 }}>Kwitansi (Receipt)</MenuItem>
-                  </>
-                )}
+                {metricMode === "churn" && [
+                  <MenuItem key="churnDate" value="churnDate" sx={{ fontSize: "13px", fontWeight: 500 }}>Tanggal blok</MenuItem>,
+                  <MenuItem key="tenureText" value="tenureText" sx={{ fontSize: "13px", fontWeight: 500 }}>Lama berlangganan</MenuItem>,
+                ]}
+                {metricMode === "revenue_gap" && [
+                  <MenuItem key="invoiceNumber" value="invoiceNumber" sx={{ fontSize: "13px", fontWeight: 500 }}>Invoice</MenuItem>,
+                  <MenuItem key="receiptNumber" value="receiptNumber" sx={{ fontSize: "13px", fontWeight: 500 }}>Kwitansi (Receipt)</MenuItem>,
+                ]}
                 {showRevenue && <MenuItem value="expectedRevenue" sx={{ fontSize: "13px", fontWeight: 500 }}>Pendapatan</MenuItem>}
               </Select>
 
@@ -444,8 +479,8 @@ export function DetailTableModal({
                   </TableCell>
                 </TableRow>
               ) : (
-                paginatedRows.map((item) => (
-                  <TableRow key={`${item.serviceId}-${item.period || ""}-${item.generatedAt}`} hover>
+                paginatedRows.map((item, rowIdx) => (
+                  <TableRow key={`${item.serviceId}-${item.period || ""}-${rowIdx}`} hover>
                     <TableCell>
                       <Box sx={{ display: "flex", flexDirection: "column" }}>
                         <Typography variant="body2" sx={{ fontWeight: 600 }}>

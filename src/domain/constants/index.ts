@@ -19,7 +19,6 @@ export const OPERATIONAL_HIERARCHY_FLOW = [
   "branch",
   "service_group",
   "service",
-  "customer",
 ] as const;
 
 export const SALES_HIERARCHY_FLOW = [

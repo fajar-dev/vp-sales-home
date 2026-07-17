@@ -28,6 +28,7 @@ import {
 import { useDashboardFilters } from "@/hooks/use-dashboard-filters";
 import { useSnapshots } from "@/hooks/use-snapshots";
 import { useDetailRows } from "@/hooks/use-detail-rows";
+import { levelLabelId, periodLabelId } from "@/lib/detail-context";
 
 const HEAD_OFFICE_ACCESS: UserAccessScope = {
   userId: "user-ho-001",
@@ -128,6 +129,22 @@ function NewServiceDashboard() {
     },
     detailModal.isOpen,
   );
+
+  const subMetricLabels: Record<string, string> = {
+    homepaid: "Homepaid (invoice terbayar)",
+    homeconnect: "Homeconnect (sudah tertagih)",
+    block: "Terblokir",
+  };
+
+  const detailContext = {
+    metricLabel: "Layanan Baru",
+    levelLabel: levelLabelId(detailModal.level),
+    entityLabel: detailModal.level ? detailModal.label?.split(" — ")[0] : null,
+    periodLabel: periodLabelId(detailModal.period, year),
+    extraLabel: detailModal.subMetricFilter
+      ? subMetricLabels[detailModal.subMetricFilter] ?? detailModal.subMetricFilter
+      : null,
+  };
 
   const handleTrendLabelClick = (row: NewServiceTrendRow) => {
     const parts = row.id.split("::");
@@ -324,6 +341,7 @@ function NewServiceDashboard() {
         loading={detailLoading}
         title={`Detail ${detailModal.label || ""}`}
         showBandwidth={false}
+        context={detailContext}
       />
     </Box>
   );

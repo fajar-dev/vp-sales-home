@@ -25,7 +25,7 @@ export class RevenueController {
     } catch (err) {
       console.error("[RevenueController] Error fetching revenue snapshots:", err);
       return NextResponse.json(
-        { error: "Internal server error", message: String(err) },
+        { error: "Gagal memuat data pendapatan." },
         { status: 500 },
       );
     }

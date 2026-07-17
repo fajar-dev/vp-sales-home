@@ -4,12 +4,7 @@ import {
   TotalServiceGranularity,
   TotalServiceRowLevel,
   RevenueMatrixRow,
-  RevenueModalRow,
 } from "@/types/entities";
-
-// Financial multipliers
-export const REALIZED_REVENUE_FACTOR = 0.985;
-export const REVENUE_GAP_FACTOR = 0.015;
 
 /**
  * Helper function to format IDR elegantly with dots
@@ -163,7 +158,8 @@ export function buildRevenueRows(
     }
   }
 
-  const operationalFlow: TotalServiceRowLevel[] = ["branch", "service_group", "service", "customer"];
+  // Customer level is served by the detail modal, not the matrix tree.
+  const operationalFlow: TotalServiceRowLevel[] = ["branch", "service_group", "service"];
   const salesFlow: TotalServiceRowLevel[] = ["branch", "lead_am", "am", "service"];
   const flow = povMode === "operational" ? operationalFlow : salesFlow;
   const index = flow.indexOf(level);
@@ -241,120 +237,3 @@ export function buildRevenueRows(
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
-/**
- * Prepares enriched snapshot data for detailed drilldown table modals
- */
-export function getEnrichedRowsForModal(
-  detailModal: { isOpen: boolean; entityId: string | null; level: string | null; period: string | null },
-  year: number,
-  timeBuckets: Array<{ key: string; label: string; periods: string[] }>,
-  scopedSnapshots: ServiceMonthlySnapshot[],
-  mockOrganizationNodes: OrganizationNode[]
-): RevenueModalRow[] {
-  if (!detailModal.isOpen || !detailModal.entityId || !detailModal.level) return [];
-
-  let targetPeriods: string[] = [];
-  if (detailModal.period) {
-    const bucket = timeBuckets.find((b) => b.key === detailModal.period);
-    if (bucket) {
-      targetPeriods = bucket.periods;
-    } else {
-      targetPeriods = [detailModal.period];
-    }
-  }
-
-  const relevantSnapshots = scopedSnapshots.filter((s) => {
-    if (targetPeriods.length > 0) {
-      if (!targetPeriods.includes(s.period)) return false;
-    } else {
-      if (!s.period.startsWith(String(year))) return false;
-    }
-
-    if (detailModal.level === "branch") return s.branchId === detailModal.entityId;
-    if (detailModal.level === "lead_am") return s.leadId === detailModal.entityId;
-    if (detailModal.level === "am") return s.amId === detailModal.entityId;
-    if (detailModal.level === "service_group") return s.serviceGroup === detailModal.entityId;
-    if (detailModal.level === "service") return s.serviceId === detailModal.entityId;
-    if (detailModal.level === "revenue_gap") return s.isActiveEndOfPeriod && !s.isPaidInPeriod;
-    return true;
-  });
-
-  const nodeMap = new Map(mockOrganizationNodes.map((n) => [n.id, n]));
-
-  if (detailModal.level === "revenue_gap") {
-    // Return all active unpaid monthly snapshots chronologically
-    return relevantSnapshots
-      .sort((a, b) => a.period.localeCompare(b.period))
-      .map((snapshot) => {
-        const idNumber = snapshot.serviceId.split("-")[1] || "000";
-        return {
-          serviceId: snapshot.serviceId,
-          customerName: `Customer ${idNumber}`,
-          serviceName: `Service Package ${idNumber}`,
-          branchName: nodeMap.get(snapshot.branchId)?.name ?? null,
-          leadName: snapshot.leadId ? nodeMap.get(snapshot.leadId)?.name ?? null : null,
-          amName: snapshot.amId ? nodeMap.get(snapshot.amId)?.name ?? null : null,
-          serviceGroup: snapshot.serviceGroup,
-          installationAddress: `Jalan Sudirman No. ${idNumber}, Kota ${
-            nodeMap.get(snapshot.branchId)?.name ?? "Unknown"
-          }`,
-          generatedAt: snapshot.generatedAt,
-          currentStatus: snapshot.isChurnedInPeriod
-            ? "churned"
-            : snapshot.isActiveEndOfPeriod
-            ? "active"
-            : "inactive",
-          currentTotalActive: snapshot.activeServiceCount,
-          bandwidthMbps:
-            parseInt(idNumber) % 3 === 0 ? 100 : parseInt(idNumber) % 2 === 0 ? 50 : 20,
-          expectedRevenue: snapshot.expectedRevenue,
-          period: snapshot.period,
-          invoiceNumber: `INV-${snapshot.period.replace("-", "")}-${idNumber}`,
-          receiptNumber: null,
-          activeDate: `2024-${String(((parseInt(idNumber) || 1) % 12) + 1).padStart(2, "0")}-10`,
-        };
-      });
-  }
-
-  const latestSnapshotsMap = new Map<string, ServiceMonthlySnapshot>();
-  relevantSnapshots.forEach((s) => {
-    const existing = latestSnapshotsMap.get(s.serviceId);
-    if (!existing || s.period > existing.period) {
-      if (s.expectedRevenue > 0) {
-        latestSnapshotsMap.set(s.serviceId, s);
-      }
-    }
-  });
-
-  const filteredSnapshots = Array.from(latestSnapshotsMap.values());
-
-  return filteredSnapshots.map((snapshot) => {
-    const idNumber = snapshot.serviceId.split("-")[1] || "000";
-    return {
-      serviceId: snapshot.serviceId,
-      customerName: `Customer ${idNumber}`,
-      serviceName: `Service Package ${idNumber}`,
-      branchName: nodeMap.get(snapshot.branchId)?.name ?? null,
-      leadName: snapshot.leadId ? nodeMap.get(snapshot.leadId)?.name ?? null : null,
-      amName: snapshot.amId ? nodeMap.get(snapshot.amId)?.name ?? null : null,
-      serviceGroup: snapshot.serviceGroup,
-      installationAddress: `Jalan Sudirman No. ${idNumber}, Kota ${
-        nodeMap.get(snapshot.branchId)?.name ?? "Unknown"
-      }`,
-      generatedAt: snapshot.generatedAt,
-      currentStatus: snapshot.isChurnedInPeriod
-        ? "churned"
-        : snapshot.isActiveEndOfPeriod
-        ? "active"
-        : "inactive",
-      currentTotalActive: snapshot.activeServiceCount,
-      bandwidthMbps:
-        parseInt(idNumber) % 3 === 0 ? 100 : parseInt(idNumber) % 2 === 0 ? 50 : 20,
-      expectedRevenue: snapshot.expectedRevenue,
-      period: snapshot.period,
-      invoiceNumber: `INV-${snapshot.period.replace("-", "")}-${idNumber}`,
-      receiptNumber: snapshot.isPaidInPeriod ? `REC-${snapshot.period.replace("-", "")}-${idNumber}` : null,
-      activeDate: `2024-${String(((parseInt(idNumber) || 1) % 12) + 1).padStart(2, "0")}-10`,
-    };
-  });
-}

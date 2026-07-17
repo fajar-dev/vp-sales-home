@@ -5,12 +5,47 @@ declare global {
   var __vpSalesRedisInstance: Redis | undefined;
 }
 
+interface MemoryEntry {
+  json: string;
+  expiresAt: number;
+}
+
+/** In-process fallback cache size cap (payloads are a few MB each). */
+const MEMORY_CACHE_MAX_ENTRIES = 100;
+/** Fallback TTL is capped so stale data cannot outlive Redis TTL semantics. */
+const MEMORY_CACHE_MAX_TTL_MS = 15 * 60 * 1000;
+
 /**
  * Singleton RedisManager Class.
- * Provides feature-flagged caching with graceful failover (fallbacks to DB if Redis is unreachable).
+ * Provides feature-flagged caching with graceful failover: when Redis is
+ * unreachable, a bounded in-process memory cache (max 15 min TTL) still
+ * absorbs repeated heavy queries; if both miss, callers fall through to DB.
  */
 export class RedisManager {
   private static instance: Redis | undefined;
+  private static memory = new Map<string, MemoryEntry>();
+
+  private static memoryGet(key: string): string | null {
+    const entry = this.memory.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      this.memory.delete(key);
+      return null;
+    }
+    return entry.json;
+  }
+
+  private static memorySet(key: string, json: string, ttlSeconds: number): void {
+    if (this.memory.size >= MEMORY_CACHE_MAX_ENTRIES) {
+      const oldestKey = this.memory.keys().next().value;
+      if (oldestKey !== undefined) this.memory.delete(oldestKey);
+    }
+    const ttlMs = Math.min(
+      ttlSeconds > 0 ? ttlSeconds * 1000 : MEMORY_CACHE_MAX_TTL_MS,
+      MEMORY_CACHE_MAX_TTL_MS,
+    );
+    this.memory.set(key, { json, expiresAt: Date.now() + ttlMs });
+  }
 
   private static getClient(): Redis | null {
     if (!DatabaseConfig.cacheEnabled) {
@@ -54,17 +89,20 @@ export class RedisManager {
    * Returns `null` if cache disabled, cache miss, or if Redis error occurs.
    */
   public static async get<T>(key: string): Promise<T | null> {
-    const client = this.getClient();
-    if (!client) return null;
+    if (!DatabaseConfig.cacheEnabled) return null;
 
-    try {
-      const data = await client.get(key);
-      if (!data) return null;
-      return JSON.parse(data) as T;
-    } catch (err) {
-      console.warn(`[RedisManager] Cache GET error for key "${key}":`, err);
-      return null;
+    const client = this.getClient();
+    if (client) {
+      try {
+        const data = await client.get(key);
+        if (data) return JSON.parse(data) as T;
+      } catch (err) {
+        console.warn(`[RedisManager] Cache GET error for key "${key}":`, err);
+      }
     }
+
+    const fallback = this.memoryGet(key);
+    return fallback ? (JSON.parse(fallback) as T) : null;
   }
 
   /**
@@ -76,12 +114,16 @@ export class RedisManager {
     value: T,
     ttlSeconds?: number,
   ): Promise<void> {
+    if (!DatabaseConfig.cacheEnabled) return;
+
+    const ttl = ttlSeconds ?? DatabaseConfig.redisCacheTtl;
+    const json = JSON.stringify(value);
+
+    this.memorySet(key, json, ttl);
+
     const client = this.getClient();
     if (!client) return;
-
     try {
-      const ttl = ttlSeconds ?? DatabaseConfig.redisCacheTtl;
-      const json = JSON.stringify(value);
       if (ttl > 0) {
         await client.set(key, json, "EX", ttl);
       } else {
@@ -96,6 +138,8 @@ export class RedisManager {
    * Removes key from Redis cache.
    */
   public static async del(key: string): Promise<void> {
+    this.memory.delete(key);
+
     const client = this.getClient();
     if (!client) return;
 

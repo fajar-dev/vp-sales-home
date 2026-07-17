@@ -10,45 +10,70 @@ import { UNMAPPED_LABEL } from "@/domain/constants";
 import { RedisManager } from "../cache/RedisManager";
 import {
   IRevenueRepository,
-  RevenueDetailLevel,
   RevenueDetailParams,
   RevenuePayload,
 } from "./IRevenueRepository";
+import {
+  buildEntityClause,
+  paidBatchExists,
+  sanitizeYears,
+} from "./sql-helpers";
 
-interface RevenueLineRow extends RowDataPacket {
-  period: string; // YYYY-MM
-  billing_date: string;
+const DETAIL_ROW_LIMIT = 5000;
+
+interface RevenueAggRow extends RowDataPacket {
+  iso_period: string; // YYYY-MM
+  branch_id: string | null;
+  branch_city: string | null;
+  service_group: string | null;
+  service_id: string | null;
+  service_type: string | null;
+  manager_sales_id: string | null;
+  manager_sales_name: string | null;
+  sales_id: string | null;
+  sales_name: string | null;
+  line_count: string | number;
+  total: string | number | null;
+  paid_total: string | number | null;
+}
+
+interface RevenueDetailRow extends RowDataPacket {
+  iso_period: string;
+  billing_date: string | null;
   customer_service_id: string | null;
   customer_id: string | null;
   customer_name: string | null;
   address: string | null;
   branch_id: string | null;
   branch: string | null;
-  service_group_id: string | null;
   service_group: string | null;
   service_id: string | null;
   service: string | null;
-  manager_sales_id: string | null;
   manager_sales_name: string | null;
-  sales_id: string | null;
   sales_name: string | null;
   invoice_ai: string | null;
   invoice_id: string | null;
   receipt_id: string | null;
-  total: number | null;
+  total: string | number | null;
 }
 
-const DETAIL_ENTITY_MATCH: Record<
-  Exclude<RevenueDetailLevel, "revenue_gap">,
-  (row: RevenueLineRow, id: string) => boolean
-> = {
-  branch: (r, id) => (r.branch_id ? String(r.branch_id) : "") === id,
-  service_group: (r, id) => (r.service_group?.trim() || UNMAPPED_LABEL) === id,
-  lead_am: (r, id) => (r.manager_sales_id ? String(r.manager_sales_id) : "") === id,
-  am: (r, id) => (r.sales_id ? String(r.sales_id) : "") === id,
-  service: (r, id) => (r.service_id ? String(r.service_id) : "") === id,
-  customer: (r, id) => (r.customer_id ? String(r.customer_id) : "") === id,
-};
+/** Journal-line source shared by the aggregate & detail queries. */
+const REVENUE_FROM = /* sql */ `
+  FROM GeneralJournal gj
+  LEFT JOIN Panjar_Penjualan_Breakdown ppb ON ppb.id = gj.SumberId AND gj.Sumber = 'pnjr'
+  LEFT JOIN NewCustomerInvoice nci ON nci.AI = IFNULL(ppb.invoiceAI, gj.SumberId)
+  LEFT JOIN CustomerInvoiceTemp cit ON cit.InvoiceNum = nci.Id AND cit.Urut = nci.No
+  JOIN Services s ON s.ServiceId = cit.ServiceId AND s.ServiceCategory = :serviceCategory
+  LEFT JOIN CustomerServices cs ON cs.CustServId = cit.CustServId
+  LEFT JOIN ServiceGroup sg ON sg.ServiceGroup = cit.ServiceGroup
+  LEFT JOIN NusaBranch nb ON nb.BranchId = SUBSTRING(gj.NoPerkiraan, -6, 3)
+  LEFT JOIN Employee mgr ON mgr.EmpId = cs.ManagerSalesId
+  LEFT JOIN Employee sls ON sls.EmpId = cs.SalesId
+  LEFT JOIN NewCustomerInvoiceBatch ncib ON ncib.AI = nci.AI
+`;
+
+/** Predicate: this journal line's invoice batch has a receipt (is paid). */
+const PAID_CONDITION = `(ncib.batchNo IS NOT NULL AND ${paidBatchExists("ncib.batchNo")})`;
 
 export class RevenueRepository implements IRevenueRepository {
   private toId(value: string | number | null | undefined): string | null {
@@ -56,82 +81,41 @@ export class RevenueRepository implements IRevenueRepository {
     return String(value);
   }
 
-  private sanitizeYears(years: number[]): number[] {
-    const clean = years
-      .map((y) => Math.trunc(Number(y)))
-      .filter((y) => Number.isFinite(y) && y >= 2000 && y <= 2100);
-    return Array.from(new Set(clean));
-  }
-
-  private buildRevenueSql(): string {
+  private buildAggregateSql(): string {
     return /* sql */ `
       SELECT
-        DATE_FORMAT(gj.TglTransaksi, '%Y-%m')            AS period,
-        gj.TglTransaksi                                  AS billing_date,
-        cit.CustServId                                   AS customer_service_id,
-        cit.CustId                                       AS customer_id,
-        c.CustName                                       AS customer_name,
-        cs.installation_address                          AS address,
-        SUBSTRING(gj.NoPerkiraan, -6, 3)                 AS branch_id,
-        nb.BranchCity                                    AS branch,
-        cit.ServiceGroup                                 AS service_group_id,
-        sg.Description                                   AS service_group,
-        cit.ServiceId                                    AS service_id,
-        s.ServiceType                                    AS service,
-        cs.ManagerSalesId                                AS manager_sales_id,
-        CONCAT_WS(' ', mgr.EmpFName, mgr.EmpLName)       AS manager_sales_name,
-        cs.SalesId                                       AS sales_id,
-        CONCAT_WS(' ', sls.EmpFName, sls.EmpLName)       AS sales_name,
-        nci.AI                                           AS invoice_ai,
-        nci.Id                                           AS invoice_id,
-        nci2.receipt_id                                  AS receipt_id,
-        gj.Kredit - gj.Debet                             AS total
-      FROM GeneralJournal gj
-      LEFT JOIN Panjar_Penjualan_Breakdown ppb ON ppb.id = gj.SumberId AND gj.Sumber = 'pnjr'
-      LEFT JOIN NewCustomerInvoice nci ON nci.AI = IFNULL(ppb.invoiceAI, gj.SumberId)
-      LEFT JOIN CustomerInvoiceTemp cit ON cit.InvoiceNum = nci.Id AND cit.Urut = nci.No
-      LEFT JOIN CustomerServices cs ON cs.CustServId = cit.CustServId
-      LEFT JOIN Customer c ON c.CustId = cit.CustId
-      LEFT JOIN NusaBranch nb ON nb.BranchId = SUBSTRING(gj.NoPerkiraan, -6, 3)
-      LEFT JOIN Services s ON s.ServiceId = cit.ServiceId
-      LEFT JOIN ServiceGroup sg ON sg.ServiceGroup = cit.ServiceGroup
-      LEFT JOIN Employee mgr ON mgr.EmpId = cs.ManagerSalesId
-      LEFT JOIN Employee sls ON sls.EmpId = cs.SalesId
-      LEFT JOIN NewCustomerInvoiceBatch ncib ON ncib.AI = nci.AI
-      LEFT JOIN (
-        SELECT
-          ncib.batchNo,
-          GROUP_CONCAT(DISTINCT nci.Id ORDER BY nci.Date DESC) AS receipt_id
-        FROM NewCustomerInvoice nci
-        LEFT JOIN NewCustomerInvoiceBatch ncib ON ncib.AI = nci.AI
-        WHERE nci.Type LIKE 'RA%'
-          AND IFNULL(nci.JournalDate, nci.TransDate) < :rangeEnd
-          AND ncib.batchNo IS NOT NULL
-        GROUP BY ncib.batchNo
-      ) nci2 ON nci2.batchNo = ncib.batchNo
+        DATE_FORMAT(gj.TglTransaksi, '%Y-%m')          AS iso_period,
+        SUBSTRING(gj.NoPerkiraan, -6, 3)               AS branch_id,
+        nb.BranchCity                                  AS branch_city,
+        sg.Description                                 AS service_group,
+        cit.ServiceId                                  AS service_id,
+        s.ServiceType                                  AS service_type,
+        cs.ManagerSalesId                              AS manager_sales_id,
+        CONCAT_WS(' ', mgr.EmpFName, mgr.EmpLName)     AS manager_sales_name,
+        cs.SalesId                                     AS sales_id,
+        CONCAT_WS(' ', sls.EmpFName, sls.EmpLName)     AS sales_name,
+        COUNT(*)                                       AS line_count,
+        SUM(gj.Kredit - gj.Debet)                      AS total,
+        SUM(CASE WHEN ${PAID_CONDITION} THEN gj.Kredit - gj.Debet ELSE 0 END) AS paid_total
+      ${REVENUE_FROM}
       WHERE gj.KodeCabang = :branchId
-        AND s.ServiceCategory = :serviceCategory
         AND gj.NoPerkiraan LIKE '400%'
         AND gj.TglTransaksi >= :rangeStart
         AND gj.TglTransaksi < :rangeEnd
+      GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
     `;
   }
 
-  private async fetchRevenueLines(years: number[]): Promise<RevenueLineRow[]> {
-    const clean = this.sanitizeYears(years);
-    if (clean.length === 0) return [];
-    const minYear = Math.min(...clean);
-    const maxYear = Math.max(...clean);
-
-    return DatabaseConnection.query<RevenueLineRow>(this.buildRevenueSql(), {
+  private async fetchYearAggregate(year: number): Promise<RevenueAggRow[]> {
+    return DatabaseConnection.query<RevenueAggRow>(this.buildAggregateSql(), {
       branchId: DatabaseConfig.branchId,
       serviceCategory: DatabaseConfig.serviceCategory,
-      rangeStart: `${minYear}-01-01`,
-      rangeEnd: `${maxYear + 1}-01-01`,
+      rangeStart: `${year}-01-01`,
+      rangeEnd: `${year + 1}-01-01`,
     });
   }
 
-  private deriveNodes(rows: RevenueLineRow[]): OrganizationNode[] {
+  private deriveNodes(rows: RevenueAggRow[]): OrganizationNode[] {
     const nodes = new Map<string, OrganizationNode>();
     for (const row of rows) {
       const branchId = this.toId(row.branch_id) ?? "unmapped-branch";
@@ -140,7 +124,7 @@ export class RevenueRepository implements IRevenueRepository {
           id: branchId,
           type: "branch",
           code: branchId,
-          name: row.branch?.trim() || branchId,
+          name: row.branch_city?.trim() || branchId,
           parentId: null,
           managerUserId: null,
           isActive: true,
@@ -175,43 +159,58 @@ export class RevenueRepository implements IRevenueRepository {
   }
 
   public async findRevenueSnapshotsByYears(years: number[]): Promise<RevenuePayload> {
-    const cleanYears = this.sanitizeYears(years);
-    const cacheKey = `vpsales:revenue:${cleanYears.sort().join(",")}`;
+    const cleanYears = sanitizeYears(years);
+    if (cleanYears.length === 0) {
+      return { snapshots: [], nodes: [] };
+    }
+
+    const cacheKey = [
+      "vpsales:v2:revenue",
+      DatabaseConfig.branchId,
+      DatabaseConfig.serviceCategory,
+      cleanYears.join(","),
+    ].join(":");
+
     const cached = await RedisManager.get<RevenuePayload>(cacheKey);
     if (cached) {
       return cached;
     }
 
-    const rows = await this.fetchRevenueLines(years);
+    const perYear = await Promise.all(cleanYears.map((y) => this.fetchYearAggregate(y)));
+    const rows = perYear.flat();
 
+    const generatedAt = new Date().toISOString();
     const snapshots = rows.map<ServiceMonthlySnapshot>((row, idx) => {
       const total = Number(row.total ?? 0);
-      const paid = !!row.receipt_id;
+      const paidTotal = Number(row.paid_total ?? 0);
       return {
-        snapshotId: `rev-${row.invoice_ai ?? idx}-${idx}`,
-        period: row.period,
-        serviceId: this.toId(row.customer_service_id) ?? `line-${idx}`,
+        snapshotId: `rev-${row.iso_period}-${idx}`,
+        period: row.iso_period,
+        serviceId: `rev-${row.iso_period}-grp-${idx}`,
         productServiceId: this.toId(row.service_id) ?? "unknown-product",
-        serviceType: row.service?.trim() || this.toId(row.service_id) || UNMAPPED_LABEL,
-        custId: this.toId(row.customer_id) ?? "",
+        serviceType: row.service_type?.trim() || this.toId(row.service_id) || UNMAPPED_LABEL,
+        custId: "",
         branchId: this.toId(row.branch_id) ?? "unmapped-branch",
         leadId: this.toId(row.manager_sales_id),
         amId: this.toId(row.sales_id),
         serviceGroup: row.service_group?.trim() || UNMAPPED_LABEL,
         isRegisteredInPeriod: false,
         isConnectedInPeriod: false,
-        isPaidInPeriod: paid,
-        isActiveEndOfPeriod: true,
+        isPaidInPeriod: paidTotal > 0,
+        isActiveEndOfPeriod: false,
         isChurnedInPeriod: false,
         isBlockedInPeriod: false,
         expectedRevenue: total,
-        actualRevenue: paid ? total : 0,
-        activeServiceCount: 1,
+        actualRevenue: paidTotal,
+        activeServiceCount: Number(row.line_count) || 0,
         newServiceCount: 0,
         churnServiceCount: 0,
         blockServiceCount: 0,
+        newConnectedCount: 0,
+        newPaidCount: 0,
+        newBlockedCount: 0,
         dataCompletenessStatus: "complete",
-        generatedAt: new Date().toISOString(),
+        generatedAt,
       };
     });
 
@@ -220,39 +219,100 @@ export class RevenueRepository implements IRevenueRepository {
     return payload;
   }
 
-  public async findRevenueDetails(
-    params: RevenueDetailParams,
-    years: number[],
-  ): Promise<EnrichedDetailRow[]> {
-    const cleanYears = this.sanitizeYears(years);
-    const cacheKey = `vpsales:revenue_detail:${JSON.stringify(params)}:${cleanYears.sort().join(",")}`;
+  public async findRevenueDetails(params: RevenueDetailParams): Promise<EnrichedDetailRow[]> {
+    const periods = params.periods.filter((p) => /^\d{4}-\d{2}$/.test(p));
+    if (periods.length === 0) return [];
+
+    const cacheKey = [
+      "vpsales:v2:revenue_detail",
+      DatabaseConfig.branchId,
+      DatabaseConfig.serviceCategory,
+      JSON.stringify({ ...params, periods }),
+    ].join(":");
     const cached = await RedisManager.get<EnrichedDetailRow[]>(cacheKey);
     if (cached) {
       return cached;
     }
 
-    const rows = await this.fetchRevenueLines(years);
-    const isoPeriods = new Set(params.periods.filter((p) => /^\d{4}-\d{2}$/.test(p)));
-    const level = params.level ?? null;
+    const minPeriod = periods.reduce((a, b) => (a < b ? a : b));
+    const maxPeriod = periods.reduce((a, b) => (a > b ? a : b));
+    const [maxY, maxM] = maxPeriod.split("-").map(Number);
+    const rangeEnd =
+      maxM === 12
+        ? `${maxY + 1}-01-01`
+        : `${maxY}-${String(maxM + 1).padStart(2, "0")}-01`;
 
-    const filtered = rows.filter((row) => {
-      if (level === "revenue_gap") return !row.receipt_id;
-      if (isoPeriods.size > 0 && !isoPeriods.has(row.period)) return false;
-      if (level && params.entityId) {
-        return DETAIL_ENTITY_MATCH[level](row, params.entityId);
-      }
-      return true;
-    });
+    const queryParams: Record<string, unknown> = {
+      branchId: DatabaseConfig.branchId,
+      serviceCategory: DatabaseConfig.serviceCategory,
+      rangeStart: `${minPeriod}-01`,
+      rangeEnd,
+    };
 
-    filtered.sort((a, b) => {
-      const byGroup = (a.service_group ?? "").localeCompare(b.service_group ?? "");
-      if (byGroup !== 0) return byGroup;
-      const byService = (a.service ?? "").localeCompare(b.service ?? "");
-      if (byService !== 0) return byService;
-      return (a.customer_id ?? "").localeCompare(b.customer_id ?? "");
-    });
+    // The `revenue_gap` pseudo-level means "unpaid lines" — no entity filter.
+    const level = params.level === "revenue_gap" ? null : params.level;
+    const entityClause = buildEntityClause(
+      level,
+      params.entityId === "revenue_gap" ? null : params.entityId,
+      {
+        branch: "SUBSTRING(gj.NoPerkiraan, -6, 3)",
+        serviceGroup: "sg.Description",
+        lead: "cs.ManagerSalesId",
+        am: "cs.SalesId",
+        service: "cit.ServiceId",
+        customer: "cit.CustId",
+      },
+      queryParams,
+    );
 
-    const result = filtered.map<EnrichedDetailRow>((row, idx) => {
+    const periodList = periods.map((p) => `'${p}'`).join(", ");
+    const unpaidClause =
+      params.unpaidOnly || params.level === "revenue_gap"
+        ? `AND NOT ${PAID_CONDITION}`
+        : "";
+
+    const sql = /* sql */ `
+      SELECT
+        DATE_FORMAT(gj.TglTransaksi, '%Y-%m')          AS iso_period,
+        gj.TglTransaksi                                AS billing_date,
+        cit.CustServId                                 AS customer_service_id,
+        cit.CustId                                     AS customer_id,
+        c.CustName                                     AS customer_name,
+        cs.installation_address                        AS address,
+        SUBSTRING(gj.NoPerkiraan, -6, 3)               AS branch_id,
+        nb.BranchCity                                  AS branch,
+        sg.Description                                 AS service_group,
+        cit.ServiceId                                  AS service_id,
+        s.ServiceType                                  AS service,
+        CONCAT_WS(' ', mgr.EmpFName, mgr.EmpLName)     AS manager_sales_name,
+        CONCAT_WS(' ', sls.EmpFName, sls.EmpLName)     AS sales_name,
+        nci.AI                                         AS invoice_ai,
+        nci.Id                                         AS invoice_id,
+        CASE WHEN ncib.batchNo IS NOT NULL THEN (
+          SELECT GROUP_CONCAT(DISTINCT pr.Id ORDER BY pr.Date DESC)
+          FROM NewCustomerInvoiceBatch pb
+          JOIN NewCustomerInvoice pr ON pr.AI = pb.AI
+          WHERE pb.batchNo = ncib.batchNo
+            AND pr.Type LIKE 'RA%'
+        ) ELSE NULL END                                AS receipt_id,
+        gj.Kredit - gj.Debet                           AS total
+      ${REVENUE_FROM}
+      LEFT JOIN Customer c ON c.CustId = cit.CustId
+      WHERE gj.KodeCabang = :branchId
+        AND gj.NoPerkiraan LIKE '400%'
+        AND gj.TglTransaksi >= :rangeStart
+        AND gj.TglTransaksi < :rangeEnd
+        AND DATE_FORMAT(gj.TglTransaksi, '%Y-%m') IN (${periodList})
+        ${unpaidClause}
+        ${entityClause}
+      ORDER BY sg.Description, s.ServiceType, cit.CustId, gj.TglTransaksi
+      LIMIT ${DETAIL_ROW_LIMIT}
+    `;
+
+    const rows = await DatabaseConnection.query<RevenueDetailRow>(sql, queryParams);
+
+    const generatedAt = new Date().toISOString();
+    const result = rows.map<EnrichedDetailRow>((row, idx) => {
       const total = Number(row.total ?? 0);
       const paid = !!row.receipt_id;
       return {
@@ -260,16 +320,16 @@ export class RevenueRepository implements IRevenueRepository {
         serviceCode: this.toId(row.service_id),
         customerId: this.toId(row.customer_id) ?? "—",
         customerName: row.customer_name?.trim() || row.customer_id || "—",
-        serviceName: row.service?.trim() || row.service_id || row.customer_service_id || "—",
+        serviceName: row.service?.trim() || row.service_id || "—",
         branchName: row.branch?.trim() || row.branch_id,
         leadName: row.manager_sales_name?.trim() || null,
         amName: row.sales_name?.trim() || null,
         serviceGroup: row.service_group?.trim() || UNMAPPED_LABEL,
         installationAddress: row.address?.trim() || "—",
-        generatedAt: new Date().toISOString(),
+        generatedAt,
         currentStatus: paid ? "active" : "blocked",
         expectedRevenue: total,
-        period: row.period,
+        period: row.iso_period,
         activeDate: row.billing_date ? row.billing_date.slice(0, 10) : undefined,
         invoiceNumber: row.invoice_id ?? row.invoice_ai ?? null,
         receiptNumber: row.receipt_id ?? null,

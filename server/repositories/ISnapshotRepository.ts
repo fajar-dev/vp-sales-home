@@ -9,5 +9,10 @@ export interface SnapshotsPayload {
 }
 
 export interface ISnapshotRepository {
-  findSnapshotsByYears(years: number[]): Promise<SnapshotsPayload>;
+  /**
+   * Aggregated service counts per month × (branch, service group, service,
+   * lead, AM). `tenure` optionally restricts rows to services whose
+   * subscription age (at each snapshot month) falls in the given bucket.
+   */
+  findSnapshotsByYears(years: number[], tenure?: string | null): Promise<SnapshotsPayload>;
 }

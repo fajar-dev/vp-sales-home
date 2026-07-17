@@ -116,6 +116,11 @@ export interface ServiceSubscription {
   updatedAt: string
 }
 
+/**
+ * One aggregated dashboard row: a month × (branch, service group, service
+ * plan, lead AM, AM) group with pre-computed counts. Aggregation happens in
+ * SQL — the client only regroups/sums these rows per tree level.
+ */
 export interface ServiceMonthlySnapshot {
   snapshotId: string
   period: string
@@ -141,6 +146,12 @@ export interface ServiceMonthlySnapshot {
   newServiceCount: number
   churnServiceCount: number
   blockServiceCount: number
+  /** New services (this month's cohort) that already have an invoice. */
+  newConnectedCount: number
+  /** New services whose invoice has been paid (receipt batch exists). */
+  newPaidCount: number
+  /** New services currently in blocked status. */
+  newBlockedCount: number
   dataCompletenessStatus: DataCompletenessStatus
   generatedAt: string
 }
@@ -275,23 +286,4 @@ export interface RevenueMatrixRow {
   children: RevenueMatrixRow[]
 }
 
-export interface RevenueModalRow {
-  serviceId: string
-  customerName: string
-  serviceName: string
-  branchName: string | null
-  leadName: string | null
-  amName: string | null
-  serviceGroup: string
-  installationAddress: string
-  generatedAt: string
-  currentStatus: "churned" | "active" | "inactive"
-  currentTotalActive: number
-  bandwidthMbps: number
-  expectedRevenue: number
-  period: string
-  invoiceNumber: string
-  receiptNumber: string | null
-  activeDate: string
-}
 
