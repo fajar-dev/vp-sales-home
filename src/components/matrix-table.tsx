@@ -77,6 +77,39 @@ export default function MatrixTable({
     return totals;
   }, [rows, buckets]);
 
+  // Per-column grand totals plus their month-over-month delta and %, so the
+  // Total row mirrors the delta/percentage shown in the data cells.
+  const columnTotalCells = useMemo(() => {
+    // A column with no data in any row (future / not-run months) stays blank
+    // instead of reporting a misleading 0 / -100%.
+    const base = buckets.map((bucket) => {
+      const hasData = rows.some((r) => {
+        const cell = r.cells.find((c) => c.bucketKey === bucket.key) as
+          | { hasData?: boolean }
+          | undefined;
+        return cell ? cell.hasData !== false : false;
+      });
+      return { bucketKey: bucket.key, value: columnTotals[bucket.key] ?? 0, hasData };
+    });
+
+    // Delta compares against the nearest preceding column that has data.
+    return base.map((cur, i) => {
+      let deltaValue: number | null = null;
+      let deltaPercentage: number | null = null;
+      if (cur.hasData) {
+        for (let j = i - 1; j >= 0; j--) {
+          if (!base[j].hasData) continue;
+          const prev = base[j].value;
+          deltaValue = cur.value - prev;
+          deltaPercentage =
+            prev === 0 ? null : Math.round(((cur.value - prev) / prev) * 10000) / 100;
+          break;
+        }
+      }
+      return { ...cur, deltaValue, deltaPercentage };
+    });
+  }, [rows, buckets, columnTotals]);
+
   const parentMap = useMemo(() => {
     const map = new Map<string, MatrixRowItem>();
     function recurse(list: MatrixRowItem[], parent: MatrixRowItem | null) {
@@ -110,7 +143,7 @@ export default function MatrixTable({
         <Table sx={{ minWidth: 650 }} aria-label="matrix tree table">
           <TableHead sx={{ backgroundColor: "#f8fafc" }}>
             <TableRow>
-              <TableCell sx={{ py: 1, width: "15rem", minWidth: "15rem", maxWidth: "15rem" }}>
+              <TableCell sx={{ py: 1, minWidth: "15rem" }}>
                 {entityHeaderLabel}
               </TableCell>
               {buckets.map((bucket) => (
@@ -145,8 +178,8 @@ export default function MatrixTable({
                   }}
                 >
                   {/* Entity Name column with indent & expand action */}
-                  <TableCell sx={{ pl: depth * 3 + 1.5, py: 0.75, width: "15rem", minWidth: "15rem", maxWidth: "15rem" }}>
-                    <Stack direction="row" spacing={0.5} sx={{ alignItems: "center", minWidth: 0 }}>
+                  <TableCell sx={{ pl: depth * 3 + 1.5, py: 0.75, minWidth: "15rem" }}>
+                    <Stack direction="row" spacing={0.5} sx={{ alignItems: "flex-start", minWidth: 0 }}>
                       {hasChildren ? (
                         <IconButton size="small" onClick={() => toggleRow(row.id)} sx={{ p: 0.25, flexShrink: 0 }}>
                           {isOpen ? (
@@ -166,9 +199,7 @@ export default function MatrixTable({
                             fontWeight: depth === 0 ? 700 : depth === 1 ? 600 : 500,
                             color: depth === 0 ? "text.primary" : "text.secondary",
                             lineHeight: 1.2,
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
+                            overflowWrap: "anywhere",
                             cursor: onLabelClick ? "pointer" : "inherit",
                             "&:hover": onLabelClick ? { color: "primary.main", textDecoration: "underline" } : {},
                           }}
@@ -182,9 +213,6 @@ export default function MatrixTable({
                             lineHeight: 1,
                             display: "block",
                             mt: 0.25,
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
                           }}
                         >
                           {row.level === "lead_am" ? "manajer" : row.level === "am" ? "am" : row.level === "branch" ? "cabang" : row.level === "service_group" ? "grup layanan" : row.level === "service" ? "layanan" : row.level === "customer" ? "pelanggan" : "kategori"}
@@ -422,6 +450,97 @@ export default function MatrixTable({
                     Tidak ada data snapshot yang sesuai dengan filter scope user.
                   </Typography>
                 </TableCell>
+              </TableRow>
+            )}
+
+            {/* Column totals: sum across the top-level rows (branches are
+                disjoint, so this is the true per-period grand total). */}
+            {flattenedRows.length > 0 && (
+              <TableRow
+                sx={{
+                  backgroundColor: "#f8fafc",
+                  "& td": {
+                    borderTop: "2px solid",
+                    borderColor: "divider",
+                    position: "sticky",
+                    bottom: 0,
+                    backgroundColor: "#f8fafc",
+                  },
+                }}
+              >
+                <TableCell sx={{ py: 1, minWidth: "15rem" }}>
+                  <Typography variant="body2" sx={{ fontWeight: 700, color: "text.primary" }}>
+                    Total
+                  </Typography>
+                </TableCell>
+                {columnTotalCells.map((total) => {
+                  const isPositive = total.deltaValue !== null && total.deltaValue > 0;
+
+                  const deltaColor =
+                    total.deltaValue === null || total.deltaValue === 0
+                      ? "text.secondary"
+                      : invertColors
+                        ? isPositive
+                          ? "error.main"
+                          : "success.main"
+                        : isPositive
+                          ? "success.main"
+                          : "error.main";
+
+                  const valueStr = !total.hasData
+                    ? "–"
+                    : valueType === "currency"
+                      ? total.value === 0
+                        ? "Rp. -"
+                        : `Rp.\u00A0${Math.abs(total.value).toLocaleString("id-ID")}`
+                      : String(total.value);
+
+                  const deltaStr =
+                    total.deltaValue === null || total.deltaValue === 0
+                      ? ""
+                      : valueType === "currency"
+                        ? `${isPositive ? "+" : "-"}Rp.\u00A0${Math.abs(total.deltaValue).toLocaleString("id-ID")}`
+                        : `${isPositive ? "+" : ""}${total.deltaValue}`;
+
+                  const pctStr =
+                    total.deltaPercentage === null || total.deltaPercentage === 0
+                      ? "-"
+                      : `${total.deltaPercentage > 0 ? "+" : ""}${total.deltaPercentage}%`;
+
+                  return (
+                    <TableCell
+                      key={total.bucketKey}
+                      align="right"
+                      sx={{
+                        py: 1,
+                        width: columnWidth,
+                        minWidth: columnWidth,
+                        maxWidth: columnWidth,
+                      }}
+                    >
+                      <Stack
+                        direction="row"
+                        spacing={0.5}
+                        sx={{ justifyContent: "flex-end", alignItems: "baseline", whiteSpace: "nowrap" }}
+                      >
+                        <Typography variant="body2" sx={{ fontWeight: 700, color: "text.primary" }}>
+                          {valueStr}
+                        </Typography>
+                        {deltaStr && (
+                          <Typography variant="caption" sx={{ fontWeight: 600, color: deltaColor }}>
+                            {valueType === "currency" ? deltaStr : `(${deltaStr})`}
+                          </Typography>
+                        )}
+                      </Stack>
+                      <Typography
+                        variant="caption"
+                        sx={{ display: "block", mt: 0.1, fontWeight: 600, color: deltaColor }}
+                      >
+                        ~ {pctStr}
+                      </Typography>
+                    </TableCell>
+                  );
+                })}
               </TableRow>
             )}
           </TableBody>
