@@ -52,6 +52,22 @@ export default function TrendMatrixTable({
     return list;
   }, [rows, expandedRows]);
 
+  // Column totals across the top-level period rows (the full year).
+  const totals = useMemo(() => {
+    const acc = rows.reduce(
+      (sum, r) => ({
+        totalNewService: sum.totalNewService + r.totalNewService.value,
+        homepaid: sum.homepaid + r.homepaid.value,
+        homeconnect: sum.homeconnect + r.homeconnect.value,
+        block: sum.block + r.block.value,
+      }),
+      { totalNewService: 0, homepaid: 0, homeconnect: 0, block: 0 },
+    );
+    const paymentRate =
+      acc.totalNewService > 0 ? (acc.homepaid / acc.totalNewService) * 100 : 0;
+    return { ...acc, paymentRate };
+  }, [rows]);
+
   const renderMetricCell = (
     row: NewServiceTrendRow,
     cell: TrendMetricCell,
@@ -156,7 +172,7 @@ export default function TrendMatrixTable({
         <Table sx={{ minWidth: 650 }} aria-label="new service trend tree table">
           <TableHead sx={{ backgroundColor: "#f8fafc" }}>
             <TableRow>
-              <TableCell sx={{ py: 1, width: "15rem", minWidth: "15rem", maxWidth: "15rem" }}>
+              <TableCell sx={{ py: 1, minWidth: "15rem" }}>
                 Bulan
               </TableCell>
               <TableCell align="right" sx={{ py: 1, width: "8rem", minWidth: "8rem", maxWidth: "8rem" }}>
@@ -192,8 +208,8 @@ export default function TrendMatrixTable({
                   }}
                 >
                   {/* Entity Name column with indent & expand action */}
-                  <TableCell sx={{ pl: depth * 3 + 1.5, py: 0.75, width: "15rem", minWidth: "15rem", maxWidth: "15rem" }}>
-                    <Stack direction="row" spacing={0.5} sx={{ alignItems: "center", minWidth: 0 }}>
+                  <TableCell sx={{ pl: depth * 3 + 1.5, py: 0.75, minWidth: "15rem" }}>
+                    <Stack direction="row" spacing={0.5} sx={{ alignItems: "flex-start", minWidth: 0 }}>
                       {hasChildren ? (
                         <IconButton size="small" onClick={() => toggleRow(row.id)} sx={{ p: 0.25, flexShrink: 0 }}>
                           {isOpen ? (
@@ -213,9 +229,7 @@ export default function TrendMatrixTable({
                             fontWeight: depth === 0 ? 700 : depth === 1 ? 600 : 500,
                             color: depth === 0 ? "text.primary" : "text.secondary",
                             lineHeight: 1.2,
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
+                            overflowWrap: "anywhere",
                             cursor: onLabelClick ? "pointer" : "inherit",
                             "&:hover": onLabelClick ? { color: "primary.main", textDecoration: "underline" } : {},
                           }}
@@ -230,9 +244,6 @@ export default function TrendMatrixTable({
                               lineHeight: 1,
                               display: "block",
                               mt: 0.25,
-                              whiteSpace: "nowrap",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
                             }}
                           >
                             {row.level === "lead_am" ? "manajer" : row.level === "am" ? "am" : row.level === "branch" ? "cabang" : row.level === "service_group" ? "grup layanan" : row.level === "service" ? "layanan" : row.level === "customer" ? "pelanggan" : "kategori"}
@@ -277,6 +288,43 @@ export default function TrendMatrixTable({
                 <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
                   <Typography variant="body2" sx={{ color: "text.secondary" }}>
                     Tidak ada data snapshot yang sesuai dengan filter scope user.
+                  </Typography>
+                </TableCell>
+              </TableRow>
+            )}
+
+            {flattenedRows.length > 0 && (
+              <TableRow
+                sx={{
+                  backgroundColor: "#f8fafc",
+                  "& td": {
+                    borderTop: "2px solid",
+                    borderColor: "divider",
+                    backgroundColor: "#f8fafc",
+                  },
+                }}
+              >
+                <TableCell sx={{ py: 1, minWidth: "15rem" }}>
+                  <Typography variant="body2" sx={{ fontWeight: 700, color: "text.primary" }}>
+                    Total
+                  </Typography>
+                </TableCell>
+                {[totals.totalNewService, totals.homepaid, totals.homeconnect, totals.block].map(
+                  (value, idx) => (
+                    <TableCell
+                      key={idx}
+                      align="right"
+                      sx={{ py: 1, width: "8rem", minWidth: "8rem", maxWidth: "8rem" }}
+                    >
+                      <Typography variant="body2" sx={{ fontWeight: 700, color: "text.primary" }}>
+                        {value}
+                      </Typography>
+                    </TableCell>
+                  ),
+                )}
+                <TableCell align="right" sx={{ py: 1, width: "8rem", minWidth: "8rem", maxWidth: "8rem" }}>
+                  <Typography variant="body2" sx={{ fontWeight: 700, color: "text.primary" }}>
+                    {formatPercentageLabel(totals.paymentRate)}
                   </Typography>
                 </TableCell>
               </TableRow>
