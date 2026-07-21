@@ -462,8 +462,6 @@ export default function MatrixTable({
                   "& td": {
                     borderTop: "2px solid",
                     borderColor: "divider",
-                    position: "sticky",
-                    bottom: 0,
                     backgroundColor: "#f8fafc",
                   },
                 }}
@@ -512,32 +510,57 @@ export default function MatrixTable({
                       key={total.bucketKey}
                       align="right"
                       sx={{
-                        py: 1,
+                        py: 0.75,
                         width: columnWidth,
                         minWidth: columnWidth,
                         maxWidth: columnWidth,
                       }}
                     >
-                      <Stack
-                        direction="row"
-                        spacing={0.5}
-                        sx={{ justifyContent: "flex-end", alignItems: "baseline", whiteSpace: "nowrap" }}
-                      >
-                        <Typography variant="body2" sx={{ fontWeight: 700, color: "text.primary" }}>
-                          {valueStr}
-                        </Typography>
-                        {deltaStr && (
-                          <Typography variant="caption" sx={{ fontWeight: 600, color: deltaColor }}>
-                            {valueType === "currency" ? deltaStr : `(${deltaStr})`}
+                      {valueType === "currency" ? (
+                        <>
+                          <Typography
+                            variant="body2"
+                            sx={{ fontWeight: 700, color: "text.primary", whiteSpace: "nowrap" }}
+                          >
+                            {valueStr}
                           </Typography>
-                        )}
-                      </Stack>
-                      <Typography
-                        variant="caption"
-                        sx={{ display: "block", mt: 0.1, fontWeight: 600, color: deltaColor }}
-                      >
-                        ~ {pctStr}
-                      </Typography>
+                          <Typography
+                            variant="body2"
+                            sx={{ fontWeight: 500, fontSize: "0.8rem", mt: 0.25, color: deltaColor, whiteSpace: "nowrap" }}
+                          >
+                            {deltaStr || "-"}
+                          </Typography>
+                          <Typography
+                            variant="caption"
+                            sx={{ display: "block", mt: 0.1, fontWeight: 600, color: deltaColor }}
+                          >
+                            {pctStr === "-" ? "-%" : pctStr}
+                          </Typography>
+                        </>
+                      ) : (
+                        <>
+                          <Stack
+                            direction="row"
+                            spacing={0.5}
+                            sx={{ justifyContent: "flex-end", alignItems: "baseline", whiteSpace: "nowrap" }}
+                          >
+                            <Typography variant="body2" sx={{ fontWeight: 700, color: "text.primary" }}>
+                              {valueStr}
+                            </Typography>
+                            {deltaStr && (
+                              <Typography variant="caption" sx={{ fontWeight: 600, color: deltaColor }}>
+                                ({deltaStr})
+                              </Typography>
+                            )}
+                          </Stack>
+                          <Typography
+                            variant="caption"
+                            sx={{ display: "block", mt: 0.1, fontWeight: 600, color: deltaColor }}
+                          >
+                            ~ {pctStr}
+                          </Typography>
+                        </>
+                      )}
                     </TableCell>
                   );
                 })}

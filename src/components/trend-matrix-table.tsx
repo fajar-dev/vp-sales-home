@@ -300,8 +300,6 @@ export default function TrendMatrixTable({
                   "& td": {
                     borderTop: "2px solid",
                     borderColor: "divider",
-                    position: "sticky",
-                    bottom: 0,
                     backgroundColor: "#f8fafc",
                   },
                 }}
