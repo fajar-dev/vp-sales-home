@@ -48,7 +48,7 @@ export class DatabaseConfig {
 
   // ── Redis Cache Configuration ──────────────────────────────────
   public static get cacheEnabled(): boolean {
-    return this.readEnv("CACHE_ENABLED", "false").toLowerCase() === "true";
+    return this.readEnv("CACHE_ENABLED", "false").trim().toLowerCase() === "true";
   }
 
   public static get redisHost(): string {
