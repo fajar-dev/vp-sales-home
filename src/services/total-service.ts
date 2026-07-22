@@ -383,14 +383,21 @@ function isFlowMetric(metricMode: TotalServiceMetricMode): boolean {
   return metricMode === "new_service" || metricMode === "churn"
 }
 
-/** Active-service count at the most recent month present in `snapshots`. */
+/**
+ * Active-service count at the most recent month that actually carries active
+ * data. A month with new activations but no end-of-month excerpt yet (e.g. the
+ * current in-progress month) produces snapshot rows with activeServiceCount=0;
+ * those must not be treated as the "latest period" or the stock total collapses
+ * to zero. So we pick the latest period among rows with a positive active count.
+ */
 function getStockValueAtLatestPeriod(snapshots: ServiceMonthlySnapshot[]): number {
-  if (snapshots.length === 0) return 0
-  const latestPeriod = snapshots.reduce(
+  const withActive = snapshots.filter((snapshot) => getActiveCount(snapshot) > 0)
+  if (withActive.length === 0) return 0
+  const latestPeriod = withActive.reduce(
     (max, snapshot) => (snapshot.period > max ? snapshot.period : max),
-    snapshots[0].period,
+    withActive[0].period,
   )
-  return snapshots
+  return withActive
     .filter((snapshot) => snapshot.period === latestPeriod)
     .reduce((total, snapshot) => total + getActiveCount(snapshot), 0)
 }
@@ -727,10 +734,25 @@ export function buildTotalServiceV2DashboardData(params: {
     state,
   )
 
+  // Data availability is metric-specific. `new_service` legitimately has rows
+  // for the current in-progress month (fresh activations), but the stock/churn
+  // metrics only have data once the month-end excerpt exists. Deriving buckets
+  // from active/churn/block-bearing rows keeps an activation-only month (e.g.
+  // the current month with no excerpt yet) from showing a bogus 0 / -100%.
+  const bucketSourceSnapshots =
+    state.metricMode === "new_service"
+      ? filteredSnapshots
+      : filteredSnapshots.filter(
+          (s) =>
+            getActiveCount(s) > 0 ||
+            getChurnCount(s) > 0 ||
+            s.blockServiceCount > 0,
+        )
+
   const buckets = buildTotalServiceV2TimeBuckets(
     state.granularity,
     state.year,
-    filteredSnapshots,
+    bucketSourceSnapshots,
   )
 
   const rows = buildTotalServiceV2Rows(
