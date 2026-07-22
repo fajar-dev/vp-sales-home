@@ -149,4 +149,23 @@ export class RedisManager {
       console.warn(`[RedisManager] Cache DEL error for key "${key}":`, err);
     }
   }
+
+  /**
+   * Clears all application-specific cache keys ('vpsales:*') and in-memory fallback cache.
+   */
+  public static async clearCache(): Promise<void> {
+    this.memory.clear();
+
+    const client = this.getClient();
+    if (!client) return;
+
+    try {
+      const keys = await client.keys("vpsales:*");
+      if (keys.length > 0) {
+        await client.del(...keys);
+      }
+    } catch (err) {
+      console.warn("[RedisManager] Cache clear error:", err);
+    }
+  }
 }
