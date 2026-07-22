@@ -77,6 +77,14 @@ export default function MatrixTable({
     return totals;
   }, [rows, buckets]);
 
+  // Grand total for the Total × Total corner cell: sum of the top-level rows'
+  // metric-aware row totals (branches are disjoint, so this is correct for
+  // both flow totals and end-of-period stock counts).
+  const grandTotal = useMemo(
+    () => rows.reduce((sum, r) => sum + (r.totalAcrossBuckets ?? 0), 0),
+    [rows],
+  );
+
   // Per-column grand totals plus their month-over-month delta and %, so the
   // Total row mirrors the delta/percentage shown in the data cells.
   const columnTotalCells = useMemo(() => {
@@ -160,6 +168,20 @@ export default function MatrixTable({
                   {bucket.label}
                 </TableCell>
               ))}
+              <TableCell
+                align="right"
+                sx={{
+                  py: 1,
+                  width: columnWidth,
+                  minWidth: columnWidth,
+                  maxWidth: columnWidth,
+                  borderLeft: "1px solid",
+                  borderColor: "divider",
+                  color: "text.primary",
+                }}
+              >
+                Total
+              </TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -439,13 +461,39 @@ export default function MatrixTable({
                         </TableCell>
                       );
                     })}
+
+                  {/* Row total: aggregate across the period columns. The value
+                      is metric-aware (flow = sum, stock/active = end-of-period
+                      value) — precomputed as row.totalAcrossBuckets. */}
+                  <TableCell
+                    align="right"
+                    sx={{
+                      py: 0.75,
+                      width: columnWidth,
+                      minWidth: columnWidth,
+                      maxWidth: columnWidth,
+                      borderLeft: "1px solid",
+                      borderColor: "divider",
+                    }}
+                  >
+                    <Typography
+                      variant="body2"
+                      sx={{ fontWeight: 700, color: "text.primary", whiteSpace: "nowrap" }}
+                    >
+                      {valueType === "currency"
+                        ? row.totalAcrossBuckets === 0
+                          ? "Rp. -"
+                          : `Rp. ${Math.abs(row.totalAcrossBuckets).toLocaleString("id-ID")}`
+                        : row.totalAcrossBuckets}
+                    </Typography>
+                  </TableCell>
                 </TableRow>
               );
             })}
 
             {flattenedRows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={buckets.length + 1} align="center" sx={{ py: 4 }}>
+                <TableCell colSpan={buckets.length + 2} align="center" sx={{ py: 4 }}>
                   <Typography variant="body2" sx={{ color: "text.secondary" }}>
                     Tidak ada data snapshot yang sesuai dengan filter scope user.
                   </Typography>
@@ -564,6 +612,30 @@ export default function MatrixTable({
                     </TableCell>
                   );
                 })}
+
+                {/* Grand total: sum of the top-level rows' row-totals. */}
+                <TableCell
+                  align="right"
+                  sx={{
+                    py: 1,
+                    width: columnWidth,
+                    minWidth: columnWidth,
+                    maxWidth: columnWidth,
+                    borderLeft: "1px solid",
+                    borderColor: "divider",
+                  }}
+                >
+                  <Typography
+                    variant="body2"
+                    sx={{ fontWeight: 700, color: "text.primary", whiteSpace: "nowrap" }}
+                  >
+                    {valueType === "currency"
+                      ? grandTotal === 0
+                        ? "Rp. -"
+                        : `Rp. ${Math.abs(grandTotal).toLocaleString("id-ID")}`
+                      : grandTotal}
+                  </Typography>
+                </TableCell>
               </TableRow>
             )}
           </TableBody>
