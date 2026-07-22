@@ -134,6 +134,20 @@ export default function MatrixTable({
     return map;
   }, [rows]);
 
+  // The matrix is wider than the viewport; pin the entity (left) and Total
+  // (right) columns so a row's label and its grand total stay visible while
+  // the period columns scroll — especially when a row is expanded. Sticky
+  // cells use `inherit` so they follow the row's own (and hover) background.
+  const stickyLeft = { position: "sticky" as const, left: 0, zIndex: 2, backgroundColor: "inherit" };
+  const stickyRight = {
+    position: "sticky" as const,
+    right: 0,
+    zIndex: 2,
+    backgroundColor: "inherit",
+    borderLeft: "1px solid",
+    borderColor: "divider",
+  };
+
   return (
     <Paper
       elevation={0}
@@ -151,7 +165,7 @@ export default function MatrixTable({
         <Table sx={{ minWidth: 650 }} aria-label="matrix tree table">
           <TableHead sx={{ backgroundColor: "#f8fafc" }}>
             <TableRow>
-              <TableCell sx={{ py: 1, minWidth: "15rem" }}>
+              <TableCell sx={{ py: 1, minWidth: "15rem", ...stickyLeft, zIndex: 3, backgroundColor: "#f8fafc" }}>
                 {entityHeaderLabel}
               </TableCell>
               {buckets.map((bucket) => (
@@ -175,9 +189,10 @@ export default function MatrixTable({
                   width: columnWidth,
                   minWidth: columnWidth,
                   maxWidth: columnWidth,
-                  borderLeft: "1px solid",
-                  borderColor: "divider",
                   color: "text.primary",
+                  ...stickyRight,
+                  zIndex: 3,
+                  backgroundColor: "#f8fafc",
                 }}
               >
                 Total
@@ -194,13 +209,14 @@ export default function MatrixTable({
                   key={row.id}
                   hover
                   sx={{
+                    backgroundColor: "background.paper",
                     "&:hover": {
                       backgroundColor: "#f8fafc !important",
                     },
                   }}
                 >
                   {/* Entity Name column with indent & expand action */}
-                  <TableCell sx={{ pl: depth * 3 + 1.5, py: 0.75, minWidth: "15rem" }}>
+                  <TableCell sx={{ pl: depth * 3 + 1.5, py: 0.75, minWidth: "15rem", ...stickyLeft }}>
                     <Stack direction="row" spacing={0.5} sx={{ alignItems: "flex-start", minWidth: 0 }}>
                       {hasChildren ? (
                         <IconButton size="small" onClick={() => toggleRow(row.id)} sx={{ p: 0.25, flexShrink: 0 }}>
@@ -472,8 +488,7 @@ export default function MatrixTable({
                       width: columnWidth,
                       minWidth: columnWidth,
                       maxWidth: columnWidth,
-                      borderLeft: "1px solid",
-                      borderColor: "divider",
+                      ...stickyRight,
                     }}
                   >
                     <Typography
@@ -514,7 +529,7 @@ export default function MatrixTable({
                   },
                 }}
               >
-                <TableCell sx={{ py: 1, minWidth: "15rem" }}>
+                <TableCell sx={{ py: 1, minWidth: "15rem", ...stickyLeft, backgroundColor: "#f8fafc" }}>
                   <Typography variant="body2" sx={{ fontWeight: 700, color: "text.primary" }}>
                     Total
                   </Typography>
@@ -621,8 +636,8 @@ export default function MatrixTable({
                     width: columnWidth,
                     minWidth: columnWidth,
                     maxWidth: columnWidth,
-                    borderLeft: "1px solid",
-                    borderColor: "divider",
+                    ...stickyRight,
+                    backgroundColor: "#f8fafc",
                   }}
                 >
                   <Typography
